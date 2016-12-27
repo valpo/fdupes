@@ -36,6 +36,8 @@
 #include "md5/md5.h"
 #endif
 
+#include "fdupes_version.h"
+
 #define ISFLAG(a,b) ((a & b) == b)
 #define SETFLAG(a,b) (a |= b)
 
