@@ -40,6 +40,7 @@
 
 #include <string>
 #include <cassert>
+#include <vector>
 
 #define ISFLAG(a,b) ((a & b) == b)
 #define SETFLAG(a,b) (a |= b)
@@ -85,11 +86,12 @@ typedef struct _signatures
 
 */
 
+/** representation of a regular file */
 struct file_t {
   std::string d_name;
   off_t size;
-  char *crcpartial;
-  char *crcsignature;
+  std::string crcpartial;
+  std::string crcsignature;
   dev_t device;
   ino_t inode;
   time_t mtime;
@@ -98,6 +100,12 @@ struct file_t {
   file_t *next;
 };
 using file_tp = file_t*;
+using file_list = std::vector<file_t>;
+
+/** the list of files. We create the list in the beginning and never change it.
+ * So we can use indexes to address files later.
+ */
+file_list FileList;
 
 typedef struct _filetree {
   file_t *file; 
@@ -250,8 +258,6 @@ int grokdir(const std::string& dir, file_t **filelistp)
 
       newfile->device = 0;
       newfile->inode = 0;
-      newfile->crcsignature = NULL;
-      newfile->crcpartial = NULL;
       newfile->duplicates = NULL;
       newfile->hasdupes = 0;
 
@@ -461,59 +467,39 @@ file_t **checkmatch(filetree_t **root, filetree_t *checktree, file_t *file)
   else 
     if (fsize > checktree->file->size) cmpresult = 1;
   else {
-    if (checktree->file->crcpartial == NULL) {
+    if (checktree->file->crcpartial.empty()) {
       crcsignature = getcrcpartialsignature(checktree->file->d_name);
       if (crcsignature == NULL) return NULL;
 
-      checktree->file->crcpartial = (char*) malloc(strlen(crcsignature)+1);
-      if (checktree->file->crcpartial == NULL) {
-	errormsg("out of memory\n");
-	exit(1);
-      }
-      strcpy(checktree->file->crcpartial, crcsignature);
+      checktree->file->crcpartial = crcsignature;
     }
 
-    if (file->crcpartial == NULL) {
+    if (file->crcpartial.empty()) {
       crcsignature = getcrcpartialsignature(file->d_name);
       if (crcsignature == NULL) return NULL;
 
-      file->crcpartial = (char*) malloc(strlen(crcsignature)+1);
-      if (file->crcpartial == NULL) {
-	errormsg("out of memory\n");
-	exit(1);
-      }
-      strcpy(file->crcpartial, crcsignature);
+      file->crcpartial = crcsignature;
     }
 
-    cmpresult = strcmp(file->crcpartial, checktree->file->crcpartial);
+    cmpresult = strcmp(file->crcpartial.c_str(), checktree->file->crcpartial.c_str());
     /*if (cmpresult != 0) errormsg("    on %s vs %s\n", file->d_name, checktree->file->d_name);*/
 
     if (cmpresult == 0) {
-      if (checktree->file->crcsignature == NULL) {
+      if (checktree->file->crcsignature.empty()) {
 	crcsignature = getcrcsignature(checktree->file->d_name);
 	if (crcsignature == NULL) return NULL;
 
-	checktree->file->crcsignature = (char*) malloc(strlen(crcsignature)+1);
-	if (checktree->file->crcsignature == NULL) {
-	  errormsg("out of memory\n");
-	  exit(1);
-	}
-	strcpy(checktree->file->crcsignature, crcsignature);
+    checktree->file->crcsignature = crcsignature;
       }
 
-      if (file->crcsignature == NULL) {
+      if (file->crcsignature.empty()) {
 	crcsignature = getcrcsignature(file->d_name);
 	if (crcsignature == NULL) return NULL;
 
-	file->crcsignature = (char*) malloc(strlen(crcsignature)+1);
-	if (file->crcsignature == NULL) {
-	  errormsg("out of memory\n");
-	  exit(1);
-	}
-	strcpy(file->crcsignature, crcsignature);
+    file->crcsignature = crcsignature;
       }
 
-      cmpresult = strcmp(file->crcsignature, checktree->file->crcsignature);
+      cmpresult = strcmp(file->crcsignature.c_str(), checktree->file->crcsignature.c_str());
       /*if (cmpresult != 0) errormsg("P   on %s vs %s\n", 
           file->d_name, checktree->file->d_name);
       else errormsg("P F on %s vs %s\n", file->d_name,
@@ -1151,8 +1137,6 @@ int main(int argc, char **argv) {
 
   while (files) {
     curfile = files->next;
-    free(files->crcsignature);
-    free(files->crcpartial);
     free(files);
     files = curfile;
   }
