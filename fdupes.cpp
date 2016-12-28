@@ -101,7 +101,7 @@ typedef struct _filetree {
   struct _filetree *right;
 } filetree_t;
 
-void errormsg(char *message, ...)
+void errormsg(const char *message, ...)
 {
   va_list ap;
 
@@ -111,7 +111,7 @@ void errormsg(char *message, ...)
   vfprintf(stderr, message, ap);
 }
 
-void escapefilename(char *escape_list, char **filename_ptr)
+void escapefilename(const char *escape_list, char **filename_ptr)
 {
   int x;
   int tx;
@@ -134,7 +134,7 @@ void escapefilename(char *escape_list, char **filename_ptr)
   tmp[tx] = '\0';
 
   if (x != tx) {
-    *filename_ptr = realloc(*filename_ptr, strlen(tmp) + 1);
+    *filename_ptr = (char*)realloc(*filename_ptr, strlen(tmp) + 1);
     if (*filename_ptr == NULL) {
       errormsg("out of memory!\n");
       exit(1);
@@ -200,7 +200,7 @@ char **cloneargs(int argc, char **argv)
   return args;
 }
 
-int findarg(char *arg, int start, int argc, char **argv)
+int findarg(const char *arg, int start, int argc, char **argv)
 {
   int x;
   
@@ -212,7 +212,7 @@ int findarg(char *arg, int start, int argc, char **argv)
 }
 
 /* Find the first non-option argument after specified option. */
-int nonoptafter(char *option, int argc, char **oldargv, 
+int nonoptafter(const char *option, int argc, char **oldargv,
 		      char **newargv, int optind) 
 {
   int x;
@@ -645,7 +645,7 @@ void printmatches(file_t *files)
   while (files != NULL) {
     if (files->hasdupes) {
       if (!ISFLAG(flags, F_OMITFIRST)) {
-	if (ISFLAG(flags, F_SHOWSIZE)) printf("%lld byte%seach:\n", files->size,
+    if (ISFLAG(flags, F_SHOWSIZE)) printf("%ld byte%seach:\n", files->size,
 	 (files->size != 1) ? "s " : " ");
 	if (ISFLAG(flags, F_DSAMELINE)) escapefilename("\\ ", &files->d_name);
 	printf("%s%c", files->d_name, ISFLAG(flags, F_DSAMELINE)?' ':'\n');
@@ -798,7 +798,7 @@ void deletefiles(file_t *files, int prompt, FILE *tty)
       do {
 	printf("Set %d of %d, preserve files [1 - %d, all]", 
           curgroup, groups, counter);
-	if (ISFLAG(flags, F_SHOWSIZE)) printf(" (%lld byte%seach)", files->size,
+    if (ISFLAG(flags, F_SHOWSIZE)) printf(" (%ld byte%seach)", files->size,
 	  (files->size != 1) ? "s " : " ");
 	printf(": ");
 	fflush(stdout);
