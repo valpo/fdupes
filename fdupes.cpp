@@ -38,6 +38,9 @@
 
 #include "fdupes_version.h"
 
+#include <string>
+#include <cassert>
+
 #define ISFLAG(a,b) ((a & b) == b)
 #define SETFLAG(a,b) (a |= b)
 
@@ -82,8 +85,8 @@ typedef struct _signatures
 
 */
 
-typedef struct _file {
-  char *d_name;
+struct file_t {
+  std::string d_name;
   off_t size;
   char *crcpartial;
   char *crcsignature;
@@ -91,9 +94,10 @@ typedef struct _file {
   ino_t inode;
   time_t mtime;
   int hasdupes; /* true only if file is first on duplicate chain */
-  struct _file *duplicates;
-  struct _file *next;
-} file_t;
+  file_t *duplicates;
+  file_t *next;
+};
+using file_tp = file_t*;
 
 typedef struct _filetree {
   file_t *file; 
@@ -111,66 +115,45 @@ void errormsg(const char *message, ...)
   vfprintf(stderr, message, ap);
 }
 
-void escapefilename(const char *escape_list, char **filename_ptr)
+std::string escapefilename(const char *escape_list, const std::string& filename)
 {
-  int x;
-  int tx;
-  char *tmp;
-  char *filename;
+  std::string res;
 
-  filename = *filename_ptr;
-
-  tmp = (char*) malloc(strlen(filename) * 2 + 1);
-  if (tmp == NULL) {
-    errormsg("out of memory!\n");
-    exit(1);
+  for (unsigned x = 0; x < filename.size(); ++x) {
+    if (strchr(escape_list, filename[x]) != NULL) res += '\\';
+    res += filename[x];
   }
-
-  for (x = 0, tx = 0; x < strlen(filename); x++) {
-    if (strchr(escape_list, filename[x]) != NULL) tmp[tx++] = '\\';
-    tmp[tx++] = filename[x];
-  }
-
-  tmp[tx] = '\0';
-
-  if (x != tx) {
-    *filename_ptr = (char*)realloc(*filename_ptr, strlen(tmp) + 1);
-    if (*filename_ptr == NULL) {
-      errormsg("out of memory!\n");
-      exit(1);
-    }
-    strcpy(*filename_ptr, tmp);
-  }
+  return res;
 }
 
-off_t filesize(char *filename) {
+off_t filesize(const std::string& filename) {
   struct stat s;
 
-  if (stat(filename, &s) != 0) return -1;
+  if (stat(filename.c_str(), &s) != 0) return -1;
 
   return s.st_size;
 }
 
-dev_t getdevice(char *filename) {
+dev_t getdevice(const std::string& filename) {
   struct stat s;
 
-  if (stat(filename, &s) != 0) return 0;
+  if (stat(filename.c_str(), &s) != 0) return 0;
 
   return s.st_dev;
 }
 
-ino_t getinode(char *filename) {
+ino_t getinode(const std::string& filename) {
   struct stat s;
    
-  if (stat(filename, &s) != 0) return 0;
+  if (stat(filename.c_str(), &s) != 0) return 0;
 
   return s.st_ino;   
 }
 
-time_t getmtime(char *filename) {
+time_t getmtime(const std::string& filename) {
   struct stat s;
 
-  if (stat(filename, &s) != 0) return 0;
+  if (stat(filename.c_str(), &s) != 0) return 0;
 
   return s.st_mtime;
 }
@@ -231,7 +214,7 @@ int nonoptafter(const char *option, int argc, char **oldargv,
   return x;
 }
 
-int grokdir(char *dir, file_t **filelistp)
+int grokdir(const std::string& dir, file_t **filelistp)
 {
   DIR *cd;
   file_t *newfile;
@@ -243,10 +226,10 @@ int grokdir(char *dir, file_t **filelistp)
   static int progress = 0;
   static char indicator[] = "-\\|/";
 
-  cd = opendir(dir);
+  cd = opendir(dir.c_str());
 
   if (!cd) {
-    errormsg("could not chdir to %s\n", dir);
+    errormsg("could not chdir to %s\n", dir.c_str());
     return 0;
   }
 
@@ -257,7 +240,7 @@ int grokdir(char *dir, file_t **filelistp)
 	progress = (progress + 1) % 4;
       }
 
-      newfile = (file_t*) malloc(sizeof(file_t));
+      newfile = new file_t;
 
       if (!newfile) {
 	errormsg("out of memory!\n");
@@ -272,51 +255,37 @@ int grokdir(char *dir, file_t **filelistp)
       newfile->duplicates = NULL;
       newfile->hasdupes = 0;
 
-      newfile->d_name = (char*)malloc(strlen(dir)+strlen(dirinfo->d_name)+2);
-
-      if (!newfile->d_name) {
-	errormsg("out of memory!\n");
-	free(newfile);
-	closedir(cd);
-	exit(1);
-      }
-
-      strcpy(newfile->d_name, dir);
-      lastchar = strlen(dir) - 1;
+      newfile->d_name = dir;
+      lastchar = dir.size() - 1;
       if (lastchar >= 0 && dir[lastchar] != '/')
-	strcat(newfile->d_name, "/");
-      strcat(newfile->d_name, dirinfo->d_name);
+        newfile->d_name += "/";
+      newfile->d_name += dirinfo->d_name;
       
       if (filesize(newfile->d_name) == 0 && ISFLAG(flags, F_EXCLUDEEMPTY)) {
-	free(newfile->d_name);
-	free(newfile);
+    delete newfile;
 	continue;
       }
 
-      if (stat(newfile->d_name, &info) == -1) {
-	free(newfile->d_name);
-	free(newfile);
+      if (stat(newfile->d_name.c_str(), &info) == -1) {
+    delete newfile;
 	continue;
       }
 
-      if (lstat(newfile->d_name, &linfo) == -1) {
-	free(newfile->d_name);
-	free(newfile);
+      if (lstat(newfile->d_name.c_str(), &linfo) == -1) {
+    delete newfile;
 	continue;
       }
 
       if (S_ISDIR(info.st_mode)) {
 	if (ISFLAG(flags, F_RECURSE) && (ISFLAG(flags, F_FOLLOWLINKS) || !S_ISLNK(linfo.st_mode)))
 	  filecount += grokdir(newfile->d_name, filelistp);
-	free(newfile->d_name);
-	free(newfile);
+    delete newfile;
       } else {
 	if (S_ISREG(linfo.st_mode) || (S_ISLNK(linfo.st_mode) && ISFLAG(flags, F_FOLLOWLINKS))) {
 	  *filelistp = newfile;
 	  filecount++;
 	} else {
-	  free(newfile->d_name);
-	  free(newfile);
+      delete newfile;
 	}
       }
     }
@@ -331,7 +300,7 @@ int grokdir(char *dir, file_t **filelistp)
 
 /* If EXTERNAL_MD5 is not defined, use L. Peter Deutsch's MD5 library. 
  */
-char *getcrcsignatureuntil(char *filename, off_t max_read)
+char *getcrcsignatureuntil(const std::string& filename, off_t max_read)
 {
   int x;
   off_t fsize;
@@ -351,16 +320,16 @@ char *getcrcsignatureuntil(char *filename, off_t max_read)
   if (max_read != 0 && fsize > max_read)
     fsize = max_read;
 
-  file = fopen(filename, "rb");
+  file = fopen(filename.c_str(), "rb");
   if (file == NULL) {
-    errormsg("error opening file %s\n", filename);
+    errormsg("error opening file %s\n", filename.c_str());
     return NULL;
   }
  
   while (fsize > 0) {
     toread = (fsize % CHUNK_SIZE) ? (fsize % CHUNK_SIZE) : CHUNK_SIZE;
     if (fread(chunk, toread, 1, file) != 1) {
-      errormsg("error reading from file %s\n", filename);
+      errormsg("error reading from file %s\n", filename.c_str());
       fclose(file);
       return NULL;
     }
@@ -382,14 +351,14 @@ char *getcrcsignatureuntil(char *filename, off_t max_read)
   return signature;
 }
 
-char *getcrcsignature(char *filename)
+char *getcrcsignature(const std::string& filename)
 {
   return getcrcsignatureuntil(filename, 0);
 }
 
-char *getcrcpartialsignature(char *filename)
+char *getcrcpartialsignature(const std::string& filename)
 {
-  return getcrcsignatureuntil(filename, PARTIAL_MD5_SIZE);
+  return getcrcsignatureuntil(filename.c_str(), PARTIAL_MD5_SIZE);
 }
 
 #endif /* [#ifndef EXTERNAL_MD5] */
@@ -647,13 +616,13 @@ void printmatches(file_t *files)
       if (!ISFLAG(flags, F_OMITFIRST)) {
     if (ISFLAG(flags, F_SHOWSIZE)) printf("%ld byte%seach:\n", files->size,
 	 (files->size != 1) ? "s " : " ");
-	if (ISFLAG(flags, F_DSAMELINE)) escapefilename("\\ ", &files->d_name);
-	printf("%s%c", files->d_name, ISFLAG(flags, F_DSAMELINE)?' ':'\n');
+    if (ISFLAG(flags, F_DSAMELINE)) files->d_name = escapefilename("\\ ", files->d_name);
+    printf("%s%c", files->d_name.c_str(), ISFLAG(flags, F_DSAMELINE)?' ':'\n');
       }
       tmpfile = files->duplicates;
       while (tmpfile != NULL) {
-	if (ISFLAG(flags, F_DSAMELINE)) escapefilename("\\ ", &tmpfile->d_name);
-	printf("%s%c", tmpfile->d_name, ISFLAG(flags, F_DSAMELINE)?' ':'\n');
+    if (ISFLAG(flags, F_DSAMELINE)) files->d_name = escapefilename("\\ ", tmpfile->d_name);
+    printf("%s%c", tmpfile->d_name.c_str(), ISFLAG(flags, F_DSAMELINE)?' ':'\n');
 	tmpfile = tmpfile->duplicates;
       }
       printf("\n");
@@ -760,7 +729,7 @@ void deletefiles(file_t *files, int prompt, FILE *tty)
 
   max++;
 
-  dupelist = (file_t**) malloc(sizeof(file_t*) * max);
+  dupelist = new file_tp[max];
   preserve = (int*) malloc(sizeof(int) * max);
   preservestr = (char*) malloc(INPUT_SIZE);
 
@@ -775,13 +744,13 @@ void deletefiles(file_t *files, int prompt, FILE *tty)
       counter = 1;
       dupelist[counter] = files;
 
-      if (prompt) printf("[%d] %s\n", counter, files->d_name);
+      if (prompt) printf("[%d] %s\n", counter, files->d_name.c_str());
 
       tmpfile = files->duplicates;
 
       while (tmpfile) {
 	dupelist[++counter] = tmpfile;
-	if (prompt) printf("[%d] %s\n", counter, tmpfile->d_name);
+    if (prompt) printf("[%d] %s\n", counter, tmpfile->d_name.c_str());
 	tmpfile = tmpfile->duplicates;
       }
 
@@ -847,12 +816,12 @@ void deletefiles(file_t *files, int prompt, FILE *tty)
 
       for (x = 1; x <= counter; x++) { 
 	if (preserve[x])
-	  printf("   [+] %s\n", dupelist[x]->d_name);
+      printf("   [+] %s\n", dupelist[x]->d_name.c_str());
 	else {
-	  if (remove(dupelist[x]->d_name) == 0) {
-	    printf("   [-] %s\n", dupelist[x]->d_name);
+      if (remove(dupelist[x]->d_name.c_str()) == 0) {
+        printf("   [-] %s\n", dupelist[x]->d_name.c_str());
 	  } else {
-	    printf("   [!] %s ", dupelist[x]->d_name);
+        printf("   [!] %s ", dupelist[x]->d_name.c_str());
 	    printf("-- unable to delete file!\n");
 	  }
 	}
@@ -863,7 +832,7 @@ void deletefiles(file_t *files, int prompt, FILE *tty)
     files = files->next;
   }
 
-  free(dupelist);
+  delete[] dupelist;
   free(preserve);
   free(preservestr);
 }
@@ -1122,13 +1091,13 @@ int main(int argc, char **argv) {
       match = checkmatch(&checktree, checktree, curfile);
 
     if (match != NULL) {
-      file1 = fopen(curfile->d_name, "rb");
+      file1 = fopen(curfile->d_name.c_str(), "rb");
       if (!file1) {
 	curfile = curfile->next;
 	continue;
       }
       
-      file2 = fopen((*match)->d_name, "rb");
+      file2 = fopen((*match)->d_name.c_str(), "rb");
       if (!file2) {
 	fclose(file1);
 	curfile = curfile->next;
@@ -1182,7 +1151,6 @@ int main(int argc, char **argv) {
 
   while (files) {
     curfile = files->next;
-    free(files->d_name);
     free(files->crcsignature);
     free(files->crcpartial);
     free(files);
