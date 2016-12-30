@@ -41,6 +41,10 @@
 #include <string>
 #include <cassert>
 #include <vector>
+#include <set>
+#include <map>
+#include <list>
+#include <numeric>
 
 #define ISFLAG(a,b) ((a & b) == b)
 #define SETFLAG(a,b) (a |= b)
@@ -96,22 +100,47 @@ struct file_t {
   ino_t inode;
   time_t mtime;
   int hasdupes; /* true only if file is first on duplicate chain */
-  file_t *duplicates;
-  file_t *next;
+  std::set<unsigned> duplicates; //! duplicates of this file
+  unsigned index; //! the index of this file in the global fileList
 };
-using file_tp = file_t*;
-using file_list = std::vector<file_t>;
+using FileList = std::vector<file_t>;
 
 /** the list of files. We create the list in the beginning and never change it.
  * So we can use indexes to address files later.
+ * TODO: don't keep the global
  */
-file_list FileList;
+static FileList fileList;
 
-typedef struct _filetree {
-  file_t *file; 
-  struct _filetree *left;
-  struct _filetree *right;
-} filetree_t;
+/** struct to divide files into classes
+ */
+struct FileClass {
+    off_t size; //! file size
+    std::string hashPartial; //! hash of the first bytes
+    unsigned id; //! if two file have same size and same hash but different content, they get different id
+};
+
+/** just some sugar for easier coding */
+bool operator<(const FileClass& left, const FileClass& right) {
+  if (left.size < right.size) return true;
+  else if (left.size > right.size) return false;
+  else {
+      if (left.hashPartial < right.hashPartial) return true;
+      else if (left.hashPartial > right.hashPartial) return false;
+      else return left.id < right.id;
+  }
+}
+bool operator==(const FileClass& left, const FileClass& right) {
+    return left.size == right.size && left.hashPartial == right.hashPartial && left.id == right.id;
+}
+
+struct FileClassComp {
+    bool operator()(const FileClass& left, const FileClass& right) {
+        return left < right;
+    }
+};
+
+/** map holding the different FileClass instances and mapping each to a list of indexes */
+using FileClassMap = std::map<FileClass, std::set<unsigned>, FileClassComp >;
 
 void errormsg(const char *message, ...)
 {
@@ -222,10 +251,9 @@ int nonoptafter(const char *option, int argc, char **oldargv,
   return x;
 }
 
-int grokdir(const std::string& dir, file_t **filelistp)
+int grokdir(const std::string& dir, FileList& fileList)
 {
   DIR *cd;
-  file_t *newfile;
   struct dirent *dirinfo;
   int lastchar;
   int filecount = 0;
@@ -248,51 +276,42 @@ int grokdir(const std::string& dir, file_t **filelistp)
 	progress = (progress + 1) % 4;
       }
 
-      newfile = new file_t;
+      file_t newfile;
 
-      if (!newfile) {
-	errormsg("out of memory!\n");
-	closedir(cd);
-	exit(1);
-      } else newfile->next = *filelistp;
+      newfile.device = 0;
+      newfile.inode = 0;
+      newfile.hasdupes = 0;
 
-      newfile->device = 0;
-      newfile->inode = 0;
-      newfile->duplicates = NULL;
-      newfile->hasdupes = 0;
-
-      newfile->d_name = dir;
+      newfile.d_name = dir;
       lastchar = dir.size() - 1;
       if (lastchar >= 0 && dir[lastchar] != '/')
-        newfile->d_name += "/";
-      newfile->d_name += dirinfo->d_name;
+        newfile.d_name += "/";
+      newfile.d_name += dirinfo->d_name;
       
-      if (filesize(newfile->d_name) == 0 && ISFLAG(flags, F_EXCLUDEEMPTY)) {
-    delete newfile;
-	continue;
+      if (filesize(newfile.d_name) == 0 && ISFLAG(flags, F_EXCLUDEEMPTY)) {
+        continue;
       }
 
-      if (stat(newfile->d_name.c_str(), &info) == -1) {
-    delete newfile;
-	continue;
+      if (stat(newfile.d_name.c_str(), &info) == -1) {
+        continue;
       }
 
-      if (lstat(newfile->d_name.c_str(), &linfo) == -1) {
-    delete newfile;
-	continue;
+      if (lstat(newfile.d_name.c_str(), &linfo) == -1) {
+        continue;
       }
 
       if (S_ISDIR(info.st_mode)) {
-	if (ISFLAG(flags, F_RECURSE) && (ISFLAG(flags, F_FOLLOWLINKS) || !S_ISLNK(linfo.st_mode)))
-	  filecount += grokdir(newfile->d_name, filelistp);
-    delete newfile;
+          if (ISFLAG(flags, F_RECURSE) && (ISFLAG(flags, F_FOLLOWLINKS) || !S_ISLNK(linfo.st_mode)))
+              filecount += grokdir(newfile.d_name, fileList);
       } else {
-	if (S_ISREG(linfo.st_mode) || (S_ISLNK(linfo.st_mode) && ISFLAG(flags, F_FOLLOWLINKS))) {
-	  *filelistp = newfile;
-	  filecount++;
-	} else {
-      delete newfile;
-	}
+          if (S_ISREG(linfo.st_mode) || (S_ISLNK(linfo.st_mode) && ISFLAG(flags, F_FOLLOWLINKS))) {
+              // register new file
+              fileList.push_back(newfile);
+              auto idx = fileList.size()-1;
+              fileList[fileList.size()-1].index = idx;
+              filecount++;
+          } else {
+          }
       }
     }
   }
@@ -362,7 +381,7 @@ char *getcrcsignature(const std::string& filename)
   return getcrcsignatureuntil(filename, 0);
 }
 
-char *getcrcpartialsignature(const std::string& filename)
+std::string getcrcpartialsignature(const std::string& filename)
 {
   return getcrcsignatureuntil(filename.c_str(), PARTIAL_MD5_SIZE);
 }
@@ -410,15 +429,6 @@ char *getcrcsignature(char *filename)
 
 #endif /* [#ifdef EXTERNAL_MD5] */
 
-void purgetree(filetree_t *checktree)
-{
-  if (checktree->left != NULL) purgetree(checktree->left);
-    
-  if (checktree->right != NULL) purgetree(checktree->right);
-    
-  free(checktree);
-}
-
 void getfilestats(file_t *file)
 {
   file->size = filesize(file->d_name);
@@ -427,111 +437,104 @@ void getfilestats(file_t *file)
   file->mtime = getmtime(file->d_name);
 }
 
-int registerfile(filetree_t **branch, file_t *file)
+//! divide into classes by file sizes
+int registerfile(file_t& file, FileClassMap& fileClasses)
 {
-  getfilestats(file);
-
-  *branch = (filetree_t*) malloc(sizeof(filetree_t));
-  if (*branch == NULL) {
-    errormsg("out of memory!\n");
-    exit(1);
-  }
-  
-  (*branch)->file = file;
-  (*branch)->left = NULL;
-  (*branch)->right = NULL;
+  getfilestats(&file);
+  FileClass cl{file.size,"",0};
+  //printf("%s: %ld\n", file.d_name.c_str(),file.size);
+  fileClasses[cl].insert(file.index);
 
   return 1;
 }
 
-file_t **checkmatch(filetree_t **root, filetree_t *checktree, file_t *file)
-{
-  int cmpresult;
-  char *crcsignature;
-  off_t fsize;
+//file_t **checkmatch(filetree_t **root, filetree_t *checktree, file_t *file)
+//{
+//  int cmpresult;
+//  char *crcsignature;
+//  off_t fsize;
 
-  /* If device and inode fields are equal one of the files is a 
-     hard link to the other or the files have been listed twice 
-     unintentionally. We don't want to flag these files as
-     duplicates unless the user specifies otherwise.
-  */    
+//  /* If device and inode fields are equal one of the files is a
+//     hard link to the other or the files have been listed twice
+//     unintentionally. We don't want to flag these files as
+//     duplicates unless the user specifies otherwise.
+//  */
 
-  if (!ISFLAG(flags, F_CONSIDERHARDLINKS) && (getinode(file->d_name) == 
-      checktree->file->inode) && (getdevice(file->d_name) ==
-      checktree->file->device)) return NULL; 
+//  if (!ISFLAG(flags, F_CONSIDERHARDLINKS) && (getinode(file->d_name) ==
+//      checktree->file->inode) && (getdevice(file->d_name) ==
+//      checktree->file->device)) return NULL;
 
-  fsize = filesize(file->d_name);
+//  fsize = filesize(file->d_name);
   
-  if (fsize < checktree->file->size) 
-    cmpresult = -1;
-  else 
-    if (fsize > checktree->file->size) cmpresult = 1;
-  else {
-    if (checktree->file->crcpartial.empty()) {
-      crcsignature = getcrcpartialsignature(checktree->file->d_name);
-      if (crcsignature == NULL) return NULL;
+//  if (fsize < checktree->file->size)
+//    cmpresult = -1;
+//  else
+//    if (fsize > checktree->file->size) cmpresult = 1;
+//  else {
+//    if (checktree->file->crcpartial.empty()) {
+//      crcsignature = getcrcpartialsignature(checktree->file->d_name);
+//      if (crcsignature == NULL) return NULL;
 
-      checktree->file->crcpartial = crcsignature;
-    }
+//      checktree->file->crcpartial = crcsignature;
+//    }
 
-    if (file->crcpartial.empty()) {
-      crcsignature = getcrcpartialsignature(file->d_name);
-      if (crcsignature == NULL) return NULL;
+//    if (file->crcpartial.empty()) {
+//      crcsignature = getcrcpartialsignature(file->d_name);
+//      if (crcsignature == NULL) return NULL;
 
-      file->crcpartial = crcsignature;
-    }
+//      file->crcpartial = crcsignature;
+//    }
 
-    cmpresult = strcmp(file->crcpartial.c_str(), checktree->file->crcpartial.c_str());
-    /*if (cmpresult != 0) errormsg("    on %s vs %s\n", file->d_name, checktree->file->d_name);*/
+//    cmpresult = strcmp(file->crcpartial.c_str(), checktree->file->crcpartial.c_str());
+//    /*if (cmpresult != 0) errormsg("    on %s vs %s\n", file->d_name, checktree->file->d_name);*/
 
-    if (cmpresult == 0) {
-      if (checktree->file->crcsignature.empty()) {
-	crcsignature = getcrcsignature(checktree->file->d_name);
-	if (crcsignature == NULL) return NULL;
+//    if (cmpresult == 0) {
+//      if (checktree->file->crcsignature.empty()) {
+//	crcsignature = getcrcsignature(checktree->file->d_name);
+//	if (crcsignature == NULL) return NULL;
 
-    checktree->file->crcsignature = crcsignature;
-      }
+//    checktree->file->crcsignature = crcsignature;
+//      }
 
-      if (file->crcsignature.empty()) {
-	crcsignature = getcrcsignature(file->d_name);
-	if (crcsignature == NULL) return NULL;
+//      if (file->crcsignature.empty()) {
+//	crcsignature = getcrcsignature(file->d_name);
+//	if (crcsignature == NULL) return NULL;
 
-    file->crcsignature = crcsignature;
-      }
+//    file->crcsignature = crcsignature;
+//      }
 
-      cmpresult = strcmp(file->crcsignature.c_str(), checktree->file->crcsignature.c_str());
-      /*if (cmpresult != 0) errormsg("P   on %s vs %s\n", 
-          file->d_name, checktree->file->d_name);
-      else errormsg("P F on %s vs %s\n", file->d_name,
-          checktree->file->d_name);
-      printf("%s matches %s\n", file->d_name, checktree->file->d_name);*/
-    }
-  }
+//      cmpresult = strcmp(file->crcsignature.c_str(), checktree->file->crcsignature.c_str());
+//      /*if (cmpresult != 0) errormsg("P   on %s vs %s\n",
+//          file->d_name, checktree->file->d_name);
+//      else errormsg("P F on %s vs %s\n", file->d_name,
+//          checktree->file->d_name);
+//      printf("%s matches %s\n", file->d_name, checktree->file->d_name);*/
+//    }
+//  }
 
-  if (cmpresult < 0) {
-    if (checktree->left != NULL) {
-      return checkmatch(root, checktree->left, file);
-    } else {
-      registerfile(&(checktree->left), file);
-      return NULL;
-    }
-  } else if (cmpresult > 0) {
-    if (checktree->right != NULL) {
-      return checkmatch(root, checktree->right, file);
-    } else {
-      registerfile(&(checktree->right), file);
-      return NULL;
-    }
-  } else 
-  {
-    getfilestats(file);
-    return &checktree->file;
-  }
-}
+//  if (cmpresult < 0) {
+//    if (checktree->left != NULL) {
+//      return checkmatch(root, checktree->left, file);
+//    } else {
+//      registerfile(&(checktree->left), file);
+//      return NULL;
+//    }
+//  } else if (cmpresult > 0) {
+//    if (checktree->right != NULL) {
+//      return checkmatch(root, checktree->right, file);
+//    } else {
+//      registerfile(&(checktree->right), file);
+//      return NULL;
+//    }
+//  } else
+//  {
+//    getfilestats(file);
+//    return &checktree->file;
+//  }
+//}
 
 /* Do a bit-for-bit comparison in case two different files produce the 
    same signature. Unlikely, but better safe than sorry. */
-
 int confirmmatch(FILE *file1, FILE *file2)
 {
   unsigned char c1 = 0;
@@ -553,30 +556,53 @@ int confirmmatch(FILE *file1, FILE *file2)
 
   return 1;
 }
+int confirmmatch(const std::string& fname1, const std::string &fname2)
+{
+    FILE *f1 = fopen(fname1.c_str(), "rb");
+    assert(f1);
+    FILE *f2 = fopen(fname2.c_str(), "rb");
+    assert(f2);
+    int res = confirmmatch(f1,f2);
+    fclose(f1);
+    fclose(f2);
+    return res;
+}
 
-void summarizematches(file_t *files)
+/** compare a file against all known files with same hash:
+ * insert into the right class, if already known, return true
+ * return false otherwise */
+bool matchesCompare(FileClassMap& cmpSameHash, const FileClass& cl, unsigned counter, const file_t& f) {
+    for(auto& it : cmpSameHash) {
+        const auto& hcl = it.first;
+        auto& indexList = it.second;
+        if (indexList.empty()) continue;
+        unsigned idx = *indexList.begin();
+        const file_t& f2 = fileList[idx];
+        if (confirmmatch(f.d_name,f2.d_name)) {
+            indexList.insert(f.index);
+            return true;
+        }
+    }
+    return false;
+}
+
+void summarizematches(const FileClassMap& fileClasses)
 {
   int numsets = 0;
   double numbytes = 0.0;
   int numfiles = 0;
-  file_t *tmpfile;
 
-  while (files != NULL)
+  for(const auto& f : fileClasses)
   {
-    if (files->hasdupes)
-    {
-      numsets++;
-
-      tmpfile = files->duplicates;
-      while (tmpfile != NULL)
-      {
-	numfiles++;
-	numbytes += files->size;
-	tmpfile = tmpfile->duplicates;
+      const auto& indexes = f.second;
+      assert(!indexes.empty());
+      if (indexes.size() > 1) {
+          ++numsets;
+          numfiles += indexes.size()-1;
+          for(auto idx = ++indexes.begin(); idx != indexes.end(); ++idx) {
+              numbytes += fileList[*idx].size;
+          }
       }
-    }
-
-    files = files->next;
   }
 
   if (numsets == 0)
@@ -593,30 +619,29 @@ void summarizematches(file_t *files)
   }
 }
 
-void printmatches(file_t *files)
+void printmatches(const FileClassMap& fileClasses)
 {
-  file_t *tmpfile;
+    for (const auto& f : fileClasses) {
+        const auto& indexes = f.second;
+        assert(!indexes.empty());
+        if (indexes.size() > 1) {
+            if (!ISFLAG(flags, F_OMITFIRST)) {
+                if (ISFLAG(flags, F_SHOWSIZE)) printf("%ld byte%seach:\n", fileList[*indexes.begin()].size,
+                                                      (fileList[*indexes.begin()].size != 1) ? "s " : " ");
+                std::string fname = fileList[*indexes.begin()].d_name;
+                if (ISFLAG(flags, F_DSAMELINE)) fname = escapefilename("\\ ", fname);
+                printf("%s%c", fname.c_str(), ISFLAG(flags, F_DSAMELINE)?' ':'\n');
+            }
+            printf("%ld duplicates for idx %d\n", indexes.size(), *indexes.begin());
+            for(auto idx : indexes) {
+                file_t& tmpfile = fileList[idx];
+                if (ISFLAG(flags, F_DSAMELINE)) tmpfile.d_name = escapefilename("\\ ", tmpfile.d_name);
+                printf("%d: %s%c", tmpfile.index, tmpfile.d_name.c_str(), ISFLAG(flags, F_DSAMELINE)?' ':'\n');
+            }
+            printf("\n");
 
-  while (files != NULL) {
-    if (files->hasdupes) {
-      if (!ISFLAG(flags, F_OMITFIRST)) {
-    if (ISFLAG(flags, F_SHOWSIZE)) printf("%ld byte%seach:\n", files->size,
-	 (files->size != 1) ? "s " : " ");
-    if (ISFLAG(flags, F_DSAMELINE)) files->d_name = escapefilename("\\ ", files->d_name);
-    printf("%s%c", files->d_name.c_str(), ISFLAG(flags, F_DSAMELINE)?' ':'\n');
-      }
-      tmpfile = files->duplicates;
-      while (tmpfile != NULL) {
-    if (ISFLAG(flags, F_DSAMELINE)) files->d_name = escapefilename("\\ ", tmpfile->d_name);
-    printf("%s%c", tmpfile->d_name.c_str(), ISFLAG(flags, F_DSAMELINE)?' ':'\n');
-	tmpfile = tmpfile->duplicates;
-      }
-      printf("\n");
-
+        }
     }
-      
-    files = files->next;
-  }
 }
 
 /*
@@ -676,68 +701,57 @@ int relink(char *oldfile, char *newfile)
   return 1;
 }
 
-void deletefiles(file_t *files, int prompt, FILE *tty)
+void deletefiles(file_t *, int prompt, FILE *tty)
 {
   int counter;
   int groups = 0;
   int curgroup = 0;
   file_t *tmpfile;
   file_t *curfile;
-  file_t **dupelist;
   int *preserve;
   char *preservestr;
   char *token;
   char *tstr;
   int number;
   int sum;
-  int max = 0;
+  int maxDups = 0;
   int x;
   int i;
 
-  curfile = files;
-  
-  while (curfile) {
-    if (curfile->hasdupes) {
+  for(const auto& curfile : fileList) {
+    if (curfile.hasdupes) {
       counter = 1;
       groups++;
 
-      tmpfile = curfile->duplicates;
-      while (tmpfile) {
-	counter++;
-	tmpfile = tmpfile->duplicates;
-      }
+      counter = curfile.duplicates.size();
       
-      if (counter > max) max = counter;
+      if (counter > maxDups) maxDups = counter;
     }
-    
-    curfile = curfile->next;
   }
 
-  max++;
+  ++maxDups;
 
-  dupelist = new file_tp[max];
-  preserve = (int*) malloc(sizeof(int) * max);
+  std::vector<unsigned> dupelist;
+  preserve = (int*) malloc(sizeof(int) * maxDups);
   preservestr = (char*) malloc(INPUT_SIZE);
 
-  if (!dupelist || !preserve || !preservestr) {
+  if (!preserve || !preservestr) {
     errormsg("out of memory\n");
     exit(1);
   }
 
-  while (files) {
-    if (files->hasdupes) {
+  for(const auto& curfile : fileList) {
+    if (curfile.hasdupes) {
       curgroup++;
       counter = 1;
-      dupelist[counter] = files;
+      dupelist.push_back(curfile.index);
 
-      if (prompt) printf("[%d] %s\n", counter, files->d_name.c_str());
+      if (prompt) printf("[%d] %s\n", counter, curfile.d_name.c_str());
 
-      tmpfile = files->duplicates;
-
-      while (tmpfile) {
-	dupelist[++counter] = tmpfile;
-    if (prompt) printf("[%d] %s\n", counter, tmpfile->d_name.c_str());
-	tmpfile = tmpfile->duplicates;
+      for(auto idx : curfile.duplicates) {
+          const auto& tmpfile = fileList[idx];
+          dupelist.push_back(idx);
+          if (prompt) printf("[%d] %s\n", counter, tmpfile.d_name.c_str());
       }
 
       if (prompt) printf("\n");
@@ -753,8 +767,8 @@ void deletefiles(file_t *files, int prompt, FILE *tty)
       do {
 	printf("Set %d of %d, preserve files [1 - %d, all]", 
           curgroup, groups, counter);
-    if (ISFLAG(flags, F_SHOWSIZE)) printf(" (%ld byte%seach)", files->size,
-	  (files->size != 1) ? "s " : " ");
+    if (ISFLAG(flags, F_SHOWSIZE)) printf(" (%ld byte%seach)", curfile.size,
+      (curfile.size != 1) ? "s " : " ");
 	printf(": ");
 	fflush(stdout);
 
@@ -800,32 +814,32 @@ void deletefiles(file_t *files, int prompt, FILE *tty)
 
       printf("\n");
 
-      for (x = 1; x <= counter; x++) { 
-	if (preserve[x])
-      printf("   [+] %s\n", dupelist[x]->d_name.c_str());
-	else {
-      if (remove(dupelist[x]->d_name.c_str()) == 0) {
-        printf("   [-] %s\n", dupelist[x]->d_name.c_str());
-	  } else {
-        printf("   [!] %s ", dupelist[x]->d_name.c_str());
-	    printf("-- unable to delete file!\n");
-	  }
-	}
+      for (x = 1; x <= counter; x++) {
+          assert(x < dupelist.size());
+          const auto& f = fileList[dupelist[x]];
+          if (preserve[x])
+              printf("   [+] %s\n", f.d_name.c_str());
+          else {
+              if (remove(f.d_name.c_str()) == 0) {
+                  printf("   [-] %s\n", f.d_name.c_str());
+              } else {
+                  printf("   [!] %s ", f.d_name.c_str());
+                  printf("-- unable to delete file!\n");
+              }
+          }
       }
       printf("\n");
     }
     
-    files = files->next;
   }
 
-  delete[] dupelist;
   free(preserve);
   free(preservestr);
 }
 
 int sort_pairs_by_arrival(file_t *f1, file_t *f2)
 {
-  if (f2->duplicates != 0)
+  if (!f2->duplicates.empty())
     return 1;
 
   return -1;
@@ -844,47 +858,12 @@ int sort_pairs_by_mtime(file_t *f1, file_t *f2)
 void registerpair(file_t **matchlist, file_t *newmatch, 
 		  int (*comparef)(file_t *f1, file_t *f2))
 {
-  file_t *traverse;
-  file_t *back;
-
-  (*matchlist)->hasdupes = 1;
-
-  back = 0;
-  traverse = *matchlist;
-  while (traverse)
-  {
-    if (comparef(newmatch, traverse) <= 0)
-    {
-      newmatch->duplicates = traverse;
-      
-      if (back == 0)
-      {
-	*matchlist = newmatch; /* update pointer to head of list */
-
-	newmatch->hasdupes = 1;
-	traverse->hasdupes = 0; /* flag is only for first file in dupe chain */
-      }
-      else
-	back->duplicates = newmatch;
-
-      break;
-    }
-    else
-    {
-      if (traverse->duplicates == 0)
-      {
-	traverse->duplicates = newmatch;
-	
-	if (back == 0)
-	  traverse->hasdupes = 1;
-	
-	break;
-      }
-    }
-    
-    back = traverse;
-    traverse = traverse->duplicates;
-  }
+    // ignore comparef at the moment
+    auto traverse = *matchlist;
+    newmatch->duplicates.insert(traverse->index);
+    newmatch->duplicates.insert(traverse->duplicates.begin(),traverse->duplicates.end());
+    newmatch->hasdupes = 1;
+    traverse->hasdupes = 0;
 }
 
 void help_text()
@@ -925,12 +904,6 @@ void help_text()
 int main(int argc, char **argv) {
   int x;
   int opt;
-  FILE *file1;
-  FILE *file2;
-  file_t *files = NULL;
-  file_t *curfile;
-  file_t **match = NULL;
-  filetree_t *checktree = NULL;
   int filecount = 0;
   int progress = 0;
   char **oldargv;
@@ -1051,59 +1024,85 @@ int main(int argc, char **argv) {
 
     /* F_RECURSE is not set for directories before --recurse: */
     for (x = optind; x < firstrecurse; x++)
-      filecount += grokdir(argv[x], &files);
+      filecount += grokdir(argv[x], fileList);
 
     /* Set F_RECURSE for directories after --recurse: */
     SETFLAG(flags, F_RECURSE);
 
     for (x = firstrecurse; x < argc; x++)
-      filecount += grokdir(argv[x], &files);
+      filecount += grokdir(argv[x], fileList);
   } else {
     for (x = optind; x < argc; x++)
-      filecount += grokdir(argv[x], &files);
+      filecount += grokdir(argv[x], fileList);
   }
 
-  if (!files) {
+  if (fileList.empty()) {
     if (!ISFLAG(flags, F_HIDEPROGRESS)) fprintf(stderr, "\r%40s\r", " ");
     exit(0);
   }
+  printf("files: %ld\n",fileList.size());
+
+  FileClassMap fileClasses;
   
-  curfile = files;
+  // split files into classes by file size
+  for (auto& curfile : fileList) {
+      registerfile(curfile, fileClasses);
+  }
 
-  while (curfile) {
-    if (!checktree) 
-      registerfile(&checktree, curfile);
-    else 
-      match = checkmatch(&checktree, checktree, curfile);
+  int count = 0;
+  for(auto& p : fileClasses) {
+      count += p.second.size();
+  }
+  printf("files in classes: %ld\n",fileList.size());
+  printf("classes by size: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
 
-    if (match != NULL) {
-      file1 = fopen(curfile->d_name.c_str(), "rb");
-      if (!file1) {
-	curfile = curfile->next;
-	continue;
+  // further split classes by hash
+  FileClassMap hashClasses;
+  for(auto& p : fileClasses) {
+      auto& cl = p.first;
+      auto& lst = p.second;
+      if (lst.size() == 1) {
+          hashClasses[cl] = lst;
       }
-      
-      file2 = fopen((*match)->d_name.c_str(), "rb");
-      if (!file2) {
-	fclose(file1);
-	curfile = curfile->next;
-	continue;
+      else {
+          for(auto idx : lst) {
+              const file_t& f = fileList[idx];
+              std::string hash = getcrcpartialsignature(f.d_name);
+              FileClass cl{f.size,hash,0};
+              hashClasses[cl].insert(f.index);
+          }
       }
+  }
+  fileClasses = std::move(hashClasses);
+  printf("classes by hash: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
 
-      if (confirmmatch(file1, file2)) {
-	registerpair(match, curfile, sort_pairs_by_mtime);
-	
-	/*match->hasdupes = 1;
-        curfile->duplicates = match->duplicates;
-        match->duplicates = curfile;*/
+  // and finally verify the hashes by file compare
+  FileClassMap cmpClasses;
+  for(auto& p : fileClasses) {
+      auto& cl = p.first;
+      auto& lst = p.second;
+      if (lst.size() == 1) {
+          cmpClasses[cl] = lst;
       }
-      
-      fclose(file1);
-      fclose(file2);
-    }
+      else {
+          unsigned counter = 1;
+          FileClassMap cmpSameHash;
+          std::list<unsigned> files{lst.begin(),lst.end()};
+          while(!files.empty()) {
+              unsigned idx = files.front();
+              files.pop_front();
+              if (!matchesCompare(cmpSameHash,cl,counter,fileList[idx])) {
+                  FileClass ncl{cl.size,cl.hashPartial,counter++};
+                  cmpSameHash[ncl].insert(idx);
+              }
+          }
+          cmpClasses.insert(cmpSameHash.begin(),cmpSameHash.end());
+      }
+  }
+  fileClasses = std::move(cmpClasses);
+  printf("classes by cmp: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
 
-    curfile = curfile->next;
-
+#if 0
     if (!ISFLAG(flags, F_HIDEPROGRESS)) {
       fprintf(stderr, "\rProgress [%d/%d] %d%% ", progress, filecount,
        (int)((float) progress / (float) filecount * 100.0));
@@ -1128,25 +1127,17 @@ int main(int argc, char **argv) {
 
   else 
 
+#endif
+
     if (ISFLAG(flags, F_SUMMARIZEMATCHES))
-      summarizematches(files);
-      
+        summarizematches(fileClasses);
     else
+        printmatches(fileClasses);
 
-      printmatches(files);
+    for (x = 0; x < argc; x++)
+        free(oldargv[x]);
 
-  while (files) {
-    curfile = files->next;
-    free(files);
-    files = curfile;
-  }
+    free(oldargv);
 
-  for (x = 0; x < argc; x++)
-    free(oldargv[x]);
-
-  free(oldargv);
-
-  purgetree(checktree);
-
-  return 0;
+    return 0;
 }
