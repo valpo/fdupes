@@ -46,31 +46,35 @@
 #include <list>
 #include <numeric>
 
-#define ISFLAG(a,b) ((a & b) == b)
-#define SETFLAG(a,b) (a |= b)
+inline bool ISFLAG(const unsigned a, const unsigned b) {
+  return ((a & b) == b);
+}
+inline void SETFLAG(unsigned& a, const unsigned b) {
+  a |= b;
+}
 
-#define F_RECURSE           0x0001
-#define F_HIDEPROGRESS      0x0002
-#define F_DSAMELINE         0x0004
-#define F_FOLLOWLINKS       0x0008
-#define F_DELETEFILES       0x0010
-#define F_EXCLUDEEMPTY      0x0020
-#define F_CONSIDERHARDLINKS 0x0040
-#define F_SHOWSIZE          0x0080
-#define F_OMITFIRST         0x0100
-#define F_RECURSEAFTER      0x0200
-#define F_NOPROMPT          0x0400
-#define F_SUMMARIZEMATCHES  0x0800
+constexpr unsigned F_RECURSE           = 0x0001;
+constexpr unsigned F_HIDEPROGRESS      = 0x0002;
+constexpr unsigned F_DSAMELINE         = 0x0004;
+constexpr unsigned F_FOLLOWLINKS       = 0x0008;
+constexpr unsigned F_DELETEFILES       = 0x0010;
+constexpr unsigned F_EXCLUDEEMPTY      = 0x0020;
+constexpr unsigned F_CONSIDERHARDLINKS = 0x0040;
+constexpr unsigned F_SHOWSIZE          = 0x0080;
+constexpr unsigned F_OMITFIRST         = 0x0100;
+constexpr unsigned F_RECURSEAFTER      = 0x0200;
+constexpr unsigned F_NOPROMPT          = 0x0400;
+constexpr unsigned F_SUMMARIZEMATCHES  = 0x0800;
 
 char *program_name;
 
-unsigned long flags = 0;
+unsigned flags = 0;
 
-#define CHUNK_SIZE 8192
+constexpr unsigned CHUNK_SIZE = 8192;
 
-#define INPUT_SIZE 256
+constexpr unsigned INPUT_SIZE = 256;
 
-#define PARTIAL_MD5_SIZE 4096
+constexpr unsigned PARTIAL_MD5_SIZE = 4096;
 
 /* 
 
