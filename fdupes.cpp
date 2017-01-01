@@ -36,6 +36,9 @@
 #include "md5/md5.h"
 #endif
 
+#define HAVE_64BIT_LONG_LONG
+#include "fnv.h"
+
 #include "fdupes_version.h"
 
 #include <string>
@@ -326,11 +329,52 @@ int grokdir(const std::string& dir, FileList& fileList)
   return filecount;
 }
 
+template <typename I> std::string n2hexstr(I w, size_t hex_len = sizeof(I)<<1) {
+    static const char* digits = "0123456789ABCDEF";
+    std::string rc(hex_len,'0');
+    for (size_t i=0, j=(hex_len-1)*4 ; i<hex_len; ++i,j-=4)
+        rc[i] = digits[(w>>j) & 0x0f];
+    return rc;
+}
+
+std::string getcrcsignatureuntilFNV_1a(const std::string& filename, off_t max_read)
+{
+  // fnv_64a_buf
+  // FNV1A_64_INIT
+  off_t fsize = filesize(filename);
+
+  if (max_read != 0 && fsize > max_read)
+    fsize = max_read;
+
+  if (fsize < max_read) max_read = fsize;
+  if (max_read == 0) {
+      return {};
+  }
+  char buf[max_read];
+
+  FILE *file = fopen(filename.c_str(), "rb");
+  if (file == NULL) {
+    errormsg("error opening file %s\n", filename.c_str());
+    return {};
+  }
+
+  if (fread(buf, max_read, 1, file) != 1) {
+      const char* c= filename.c_str();
+      errormsg("error reading %d bytes from file %s of size %d\n", filename.c_str(),max_read,fsize);
+      fclose(file);
+      return {};
+    }
+
+  fclose(file);
+  auto hash = fnv_64a_buf(buf, max_read, FNV1A_64_INIT);
+  return n2hexstr(hash);
+}
+
 #ifndef EXTERNAL_MD5
 
 /* If EXTERNAL_MD5 is not defined, use L. Peter Deutsch's MD5 library. 
  */
-char *getcrcsignatureuntil(const std::string& filename, off_t max_read)
+std::string getcrcsignatureuntilMD5(const std::string& filename, off_t max_read)
 {
   int x;
   off_t fsize;
@@ -378,17 +422,23 @@ char *getcrcsignatureuntil(const std::string& filename, off_t max_read)
 
   fclose(file);
 
-  return signature;
+  return std::string{signature, 16*2};
 }
 
-char *getcrcsignature(const std::string& filename)
+std::string getcrcsignatureuntil(const std::string& filename, off_t max_read)
+{
+  //return getcrcsignatureuntilFNV_1a(filename, max_read);
+  return getcrcsignatureuntilMD5(filename, max_read);
+}
+
+std::string getcrcsignature(const std::string& filename)
 {
   return getcrcsignatureuntil(filename, 0);
 }
 
 std::string getcrcpartialsignature(const std::string& filename)
 {
-  return getcrcsignatureuntil(filename.c_str(), PARTIAL_MD5_SIZE);
+  return getcrcsignatureuntil(filename, PARTIAL_MD5_SIZE);
 }
 
 #endif /* [#ifndef EXTERNAL_MD5] */
