@@ -65,6 +65,7 @@ constexpr unsigned F_OMITFIRST         = 0x0100;
 constexpr unsigned F_RECURSEAFTER      = 0x0200;
 constexpr unsigned F_NOPROMPT          = 0x0400;
 constexpr unsigned F_SUMMARIZEMATCHES  = 0x0800;
+constexpr unsigned F_VERBOSE           = 0x1000;
 
 char *program_name;
 
@@ -899,6 +900,7 @@ void help_text()
   printf("                  \teach set of duplicates and delete the rest without\n");
   printf("                  \tprompting the user\n");
   printf(" -v --version     \tdisplay fdupes version\n");
+  printf(" -V --verbose     \tverbose output\n\n");
   printf(" -h --help        \tdisplay this help message\n\n");
 #ifdef OMIT_GETOPT_LONG
   printf("Note: Long options are not supported in this fdupes build.\n\n");
@@ -934,6 +936,7 @@ int main(int argc, char **argv) {
     { "noprompt", 0, 0, 'N' },
     { "summarize", 0, 0, 'm'},
     { "summary", 0, 0, 'm' },
+    { "verbose", 0, 0, 'V' },
     { 0, 0, 0, 0 }
   };
 #define GETOPT getopt_long
@@ -945,7 +948,7 @@ int main(int argc, char **argv) {
 
   oldargv = cloneargs(argc, argv);
 
-  while ((opt = GETOPT(argc, argv, "frRq1Ss::HlndvhNm"
+  while ((opt = GETOPT(argc, argv, "frRq1Ss::HlndvhNmV"
 #ifndef OMIT_GETOPT_LONG
           , long_options, NULL
 #endif
@@ -992,6 +995,9 @@ int main(int argc, char **argv) {
       break;
     case 'm':
       SETFLAG(flags, F_SUMMARIZEMATCHES);
+      break;
+    case 'V':
+      SETFLAG(flags, F_VERBOSE);
       break;
 
     default:
@@ -1044,7 +1050,17 @@ int main(int argc, char **argv) {
     if (!ISFLAG(flags, F_HIDEPROGRESS)) fprintf(stderr, "\r%40s\r", " ");
     exit(0);
   }
-  printf("files: %ld\n",fileList.size());
+  if (!ISFLAG(flags, F_HIDEPROGRESS)) {
+    fprintf(stderr, "\rProgress [%d/%d] %d%% ", progress, filecount,
+     (int)((float) progress / (float) filecount * 100.0));
+    progress++;
+  }
+
+  if (!ISFLAG(flags, F_HIDEPROGRESS)) fprintf(stderr, "\r%40s\r", " ");
+
+  if (ISFLAG(flags, F_VERBOSE)) {
+      printf("files: %ld\n",fileList.size());
+  }
 
   FileClassMap fileClasses;
   
@@ -1057,8 +1073,9 @@ int main(int argc, char **argv) {
   for(auto& p : fileClasses) {
       count += p.second.size();
   }
-  printf("files in classes: %ld\n",fileList.size());
-  printf("classes by size: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
+  if (ISFLAG(flags, F_VERBOSE)) {
+      printf("classes by size: %ld with %d files\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
+  }
 
   // further split classes by hash
   FileClassMap hashClasses;
@@ -1078,7 +1095,9 @@ int main(int argc, char **argv) {
       }
   }
   fileClasses = std::move(hashClasses);
-  printf("classes by hash: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
+  if (ISFLAG(flags, F_VERBOSE)) {
+      printf("classes by hash: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
+  }
 
   // and finally verify the hashes by file compare
   FileClassMap cmpClasses;
@@ -1104,18 +1123,11 @@ int main(int argc, char **argv) {
       }
   }
   fileClasses = std::move(cmpClasses);
-  printf("classes by cmp: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
-
-#if 0
-    if (!ISFLAG(flags, F_HIDEPROGRESS)) {
-      fprintf(stderr, "\rProgress [%d/%d] %d%% ", progress, filecount,
-       (int)((float) progress / (float) filecount * 100.0));
-      progress++;
-    }
+  if (ISFLAG(flags, F_VERBOSE)) {
+      printf("classes by cmp: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
   }
 
-  if (!ISFLAG(flags, F_HIDEPROGRESS)) fprintf(stderr, "\r%40s\r", " ");
-
+#if 0
   if (ISFLAG(flags, F_DELETEFILES))
   {
     if (ISFLAG(flags, F_NOPROMPT))
