@@ -50,6 +50,8 @@
 #include <numeric>
 #include <chrono>
 
+#include <boost/iostreams/device/mapped_file.hpp>
+
 inline bool ISFLAG(const unsigned a, const unsigned b) {
   return ((a & b) == b);
 }
@@ -601,37 +603,19 @@ void getfilestats(file_t *file)
 
 /* Do a bit-for-bit comparison in case two different files produce the 
    same signature. Unlikely, but better safe than sorry. */
-int confirmmatch(FILE *file1, FILE *file2)
+bool confirmmatch(const file_t& file1, const file_t& file2)
 {
-  unsigned char c1 = 0;
-  unsigned char c2 = 0;
-  size_t r1;
-  size_t r2;
-  
-  fseek(file1, 0, SEEK_SET);
-  fseek(file2, 0, SEEK_SET);
+    if (file1.size != file2.size) return false;
+    else if (file1.size ==0) return true;
 
-  do {
-    r1 = fread(&c1, sizeof(c1), 1, file1);
-    r2 = fread(&c2, sizeof(c2), 1, file2);
+    // see http://www.cplusplus.com/forum/general/94032/#msg504989
+    boost::iostreams::mapped_file_source f1(file1.d_name);
+    boost::iostreams::mapped_file_source f2(file2.d_name);
 
-    if (c1 != c2) return 0; /* file contents are different */
-  } while (r1 && r2);
-  
-  if (r1 != r2) return 0; /* file lengths are different */
-
-  return 1;
-}
-int confirmmatch(const std::string& fname1, const std::string &fname2)
-{
-    FILE *f1 = fopen(fname1.c_str(), "rb");
-    assert(f1);
-    FILE *f2 = fopen(fname2.c_str(), "rb");
-    assert(f2);
-    int res = confirmmatch(f1,f2);
-    fclose(f1);
-    fclose(f2);
-    return res;
+    if(f1.size() == f2.size() && std::equal(f1.data(), f1.data() + f1.size(), f2.data()))
+        return true;
+    else
+        return false;
 }
 
 /** compare a file against all known files with same hash:
@@ -644,7 +628,7 @@ bool matchesCompare(FileClassMap& cmpSameHash, const FileClass& cl, unsigned cou
         if (indexList.empty()) continue;
         unsigned idx = *indexList.begin();
         const file_t& f2 = fileList[idx];
-        if (confirmmatch(f.d_name,f2.d_name)) {
+        if (confirmmatch(f,f2)) {
             indexList.insert(f.index);
             return true;
         }
