@@ -361,36 +361,31 @@ template <typename I> std::string n2hexstr(I w, size_t hex_len = sizeof(I)<<1) {
     return rc;
 }
 
-std::string getcrcsignatureuntilFNV_1a(const std::string& filename, off_t max_read)
+std::string getcrcsignatureuntilFNV_1a(const file_t& fileref, off_t max_read)
 {
   // fnv_64a_buf
   // FNV1A_64_INIT
-  off_t fsize = filesize(filename);
+  if (fileref.size == 0) return {};
+  if (!fileref.crcpartial.empty()) return fileref.crcpartial;
 
-  if (max_read != 0 && fsize > max_read)
-    fsize = max_read;
+  if (fileref.size < max_read) max_read = fileref.size;
 
-  if (fsize < max_read) max_read = fsize;
-  if (max_read == 0) {
-      return {};
-  }
-  char buf[max_read];
-
-  FILE *file = fopen(filename.c_str(), "rb");
+  FILE *file = fopen(fileref.d_name.c_str(), "rb");
   if (file == NULL) {
-    errormsg("error opening file %s\n", filename.c_str());
+    errormsg("error opening file %s\n", fileref.d_name.c_str());
     return {};
   }
 
-  if (fread(buf, max_read, 1, file) != 1) {
-      const char* c= filename.c_str();
-      errormsg("error reading %d bytes from file %s of size %d\n", filename.c_str(),max_read,fsize);
+  std::vector<char> buf;
+  buf.resize(max_read);
+  if (fread(&buf[0], max_read, 1, file) != 1) {
+      errormsg("error reading %d bytes from file %s of size %d\n", fileref.d_name.c_str(),max_read,fileref.size);
       fclose(file);
       return {};
     }
 
   fclose(file);
-  auto hash = fnv_64a_buf(buf, max_read, FNV1A_64_INIT);
+  auto hash = fnv_64a_buf(&buf[0], max_read, FNV1A_64_INIT);
   return n2hexstr(hash);
 }
 
@@ -449,20 +444,10 @@ std::string getcrcsignatureuntilMD5(const std::string& filename, off_t max_read)
   return std::string{signature, 16*2};
 }
 
-std::string getcrcsignatureuntil(const std::string& filename, off_t max_read)
+std::string getcrcpartialsignature(const file_t& file, off_t max_read = PARTIAL_MD5_SIZE)
 {
-  //return getcrcsignatureuntilFNV_1a(filename, max_read);
-  return getcrcsignatureuntilMD5(filename, max_read);
-}
-
-std::string getcrcsignature(const std::string& filename)
-{
-  return getcrcsignatureuntil(filename, 0);
-}
-
-std::string getcrcpartialsignature(const std::string& filename)
-{
-  return getcrcsignatureuntil(filename, PARTIAL_MD5_SIZE);
+    return getcrcsignatureuntilFNV_1a(file, max_read);
+    //return getcrcsignatureuntilMD5(file, max_read);
 }
 
 #endif /* [#ifndef EXTERNAL_MD5] */
@@ -1128,7 +1113,7 @@ int main(int argc, char **argv) {
       else {
           for(auto idx : lst) {
               const file_t& f = fileList[idx];
-              std::string hash = getcrcpartialsignature(f.d_name);
+              std::string hash = getcrcpartialsignature(f);
               FileClass cl{f.size,hash,0};
               hashClasses[cl].insert(f.index);
           }
