@@ -259,7 +259,7 @@ int nonoptafter(const char *option, int argc, char **oldargv,
   return x;
 }
 
-int grokdir(const std::string& dir, FileList& fileList)
+int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasses)
 {
   DIR *cd;
   struct dirent *dirinfo;
@@ -310,14 +310,17 @@ int grokdir(const std::string& dir, FileList& fileList)
 
       if (S_ISDIR(info.st_mode)) {
           if (ISFLAG(flags, F_RECURSE) && (ISFLAG(flags, F_FOLLOWLINKS) || !S_ISLNK(linfo.st_mode)))
-              filecount += grokdir(newfile.d_name, fileList);
+              filecount += grokdir(newfile.d_name, fileList, fileClasses);
       } else {
           if (S_ISREG(linfo.st_mode) || (S_ISLNK(linfo.st_mode) && ISFLAG(flags, F_FOLLOWLINKS))) {
               // register new file
               fileList.push_back(newfile);
               auto idx = fileList.size()-1;
-              fileList[fileList.size()-1].index = idx;
+              file_t& f = fileList[idx];
+              f.index = idx;
+              f.size = filesize(f.d_name);
               filecount++;
+              fileClasses[{f.size,"",0}].insert(f.index);
           } else {
           }
       }
@@ -490,17 +493,6 @@ void getfilestats(file_t *file)
   file->inode = getinode(file->d_name);
   file->device = getdevice(file->d_name);
   file->mtime = getmtime(file->d_name);
-}
-
-//! divide into classes by file sizes
-int registerfile(file_t& file, FileClassMap& fileClasses)
-{
-  getfilestats(&file);
-  FileClass cl{file.size,"",0};
-  //printf("%s: %ld\n", file.d_name.c_str(),file.size);
-  fileClasses[cl].insert(file.index);
-
-  return 1;
 }
 
 //file_t **checkmatch(filetree_t **root, filetree_t *checktree, file_t *file)
@@ -1071,6 +1063,8 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
+  FileClassMap fileClasses; // divide files into classes depending on size, hash and compare result
+
   if (ISFLAG(flags, F_RECURSEAFTER)) {
     firstrecurse = nonoptafter("--recurse:", argc, oldargv, argv, optind);
     
@@ -1084,16 +1078,16 @@ int main(int argc, char **argv) {
 
     /* F_RECURSE is not set for directories before --recurse: */
     for (x = optind; x < firstrecurse; x++)
-      filecount += grokdir(argv[x], fileList);
+      filecount += grokdir(argv[x], fileList, fileClasses);
 
     /* Set F_RECURSE for directories after --recurse: */
     SETFLAG(flags, F_RECURSE);
 
     for (x = firstrecurse; x < argc; x++)
-      filecount += grokdir(argv[x], fileList);
+      filecount += grokdir(argv[x], fileList, fileClasses);
   } else {
     for (x = optind; x < argc; x++)
-      filecount += grokdir(argv[x], fileList);
+      filecount += grokdir(argv[x], fileList, fileClasses);
   }
 
   if (fileList.empty()) {
@@ -1112,17 +1106,7 @@ int main(int argc, char **argv) {
       printf("files: %ld\n",fileList.size());
   }
 
-  FileClassMap fileClasses;
   
-  // split files into classes by file size
-  for (auto& curfile : fileList) {
-      registerfile(curfile, fileClasses);
-  }
-
-  int count = 0;
-  for(auto& p : fileClasses) {
-      count += p.second.size();
-  }
   if (ISFLAG(flags, F_VERBOSE)) {
       printf("classes by size: %ld with %d files\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
   }
