@@ -48,6 +48,7 @@
 #include <map>
 #include <list>
 #include <numeric>
+#include <chrono>
 
 inline bool ISFLAG(const unsigned a, const unsigned b) {
   return ((a & b) == b);
@@ -97,6 +98,19 @@ typedef struct _signatures
 } signatures_t;
 
 */
+
+/** very simple timer to measure the duration of some calculations
+ * */
+class Timer {
+    std::chrono::time_point<std::chrono::steady_clock> _start, _end;
+public:
+    void start() { _start = std::chrono::steady_clock::now(); }
+    void stop() { _end = std::chrono::steady_clock::now(); }
+    void print(const char* s) {
+        std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(_end - _start);
+        printf("duration of %s: %f seconds\n", s, time_span.count());
+    }
+};
 
 /** representation of a regular file */
 struct file_t {
@@ -320,7 +334,12 @@ int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasse
               f.index = idx;
               f.size = filesize(f.d_name);
               filecount++;
-              fileClasses[{f.size,"",0}].insert(f.index);
+              auto& pa = fileClasses[{f.size,"",0}];
+              pa.insert(f.index);
+              if (pa.size() > 1 && f.size > 4095) {
+                  //printf("its worth hashing here\n");
+
+              }
           } else {
           }
       }
@@ -1064,7 +1083,9 @@ int main(int argc, char **argv) {
   }
 
   FileClassMap fileClasses; // divide files into classes depending on size, hash and compare result
+  Timer timer;
 
+  timer.start();
   if (ISFLAG(flags, F_RECURSEAFTER)) {
     firstrecurse = nonoptafter("--recurse:", argc, oldargv, argv, optind);
     
@@ -1101,16 +1122,17 @@ int main(int argc, char **argv) {
   }
 
   if (!ISFLAG(flags, F_HIDEPROGRESS)) fprintf(stderr, "\r%40s\r", " ");
+  timer.stop(); timer.print("scanning directories");
 
   if (ISFLAG(flags, F_VERBOSE)) {
       printf("files: %ld\n",fileList.size());
   }
-
   
   if (ISFLAG(flags, F_VERBOSE)) {
       printf("classes by size: %ld with %d files\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
   }
 
+  timer.start();
   // further split classes by hash
   FileClassMap hashClasses;
   for(auto& p : fileClasses) {
@@ -1132,7 +1154,9 @@ int main(int argc, char **argv) {
   if (ISFLAG(flags, F_VERBOSE)) {
       printf("classes by hash: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
   }
+  timer.stop();  timer.print("sorting by hash");
 
+  timer.start();
   // and finally verify the hashes by file compare
   FileClassMap cmpClasses;
   for(auto& p : fileClasses) {
@@ -1160,6 +1184,7 @@ int main(int argc, char **argv) {
   if (ISFLAG(flags, F_VERBOSE)) {
       printf("classes by cmp: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
   }
+  timer.stop(); timer.print("sorting by compare");
 
 #if 0
   if (ISFLAG(flags, F_DELETEFILES))
