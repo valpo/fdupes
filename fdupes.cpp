@@ -497,14 +497,6 @@ char *getcrcsignature(char *filename)
 
 #endif /* [#ifdef EXTERNAL_MD5] */
 
-void getfilestats(FileInfo *file)
-{
-  file->size = filesize(file->d_name);
-  file->inode = getinode(file->d_name);
-  file->device = getdevice(file->d_name);
-  file->mtime = getmtime(file->d_name);
-}
-
 /* Do a bit-for-bit comparison in case two different files produce the 
    same signature. Unlikely, but better safe than sorry. */
 bool confirmmatch(const FileInfo& file1, const FileInfo& file2)
