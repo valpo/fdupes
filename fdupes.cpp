@@ -99,7 +99,7 @@ public:
 };
 
 /** representation of a regular file */
-struct file_t {
+struct FileInfo {
   std::string d_name;
   off_t size;
   std::string crcpartial;
@@ -111,7 +111,7 @@ struct file_t {
   std::set<unsigned> duplicates; //! duplicates of this file
   unsigned index; //! the index of this file in the global fileList
 };
-using FileList = std::vector<file_t>;
+using FileList = std::vector<FileInfo>;
 
 /** the list of files. We create the list in the beginning and never change it.
  * So we can use indexes to address files later.
@@ -264,15 +264,15 @@ static std::vector<std::future<std::pair<unsigned,std::string>>> hashJobs;
 
 std::pair<unsigned,std::string> calcHash(unsigned index)
 {
-    std::string getcrcpartialsignature(const file_t& file, off_t max_read = PARTIAL_MD5_SIZE);
-    const file_t& f = fileList[index];
+    std::string getcrcpartialsignature(const FileInfo& file, off_t max_read = PARTIAL_MD5_SIZE);
+    const FileInfo& f = fileList[index];
     if (f.crcpartial.empty())
         return {index,getcrcpartialsignature(f)};
     else
         return {index,f.crcpartial};
 }
 
-void preCalcHash(file_t& f)
+void preCalcHash(FileInfo& f)
 {
     auto res = std::async(std::launch::async,calcHash,f.index);
     hashJobs.push_back(std::move(res));
@@ -303,7 +303,7 @@ int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasse
 	progress = (progress + 1) % 4;
       }
 
-      file_t newfile;
+      FileInfo newfile;
 
       newfile.device = 0;
       newfile.inode = 0;
@@ -335,7 +335,7 @@ int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasse
               // register new file
               fileList.push_back(newfile);
               auto idx = fileList.size()-1;
-              file_t& f = fileList[idx];
+              FileInfo& f = fileList[idx];
               f.index = idx;
               f.size = filesize(f.d_name);
               filecount++;
@@ -364,7 +364,7 @@ template <typename I> std::string n2hexstr(I w, size_t hex_len = sizeof(I)<<1) {
     return rc;
 }
 
-std::string getcrcsignatureuntilFNV_1a(const file_t& fileref, off_t max_read)
+std::string getcrcsignatureuntilFNV_1a(const FileInfo& fileref, off_t max_read)
 {
   // fnv_64a_buf
   // FNV1A_64_INIT
@@ -447,7 +447,7 @@ std::string getcrcsignatureuntilMD5(const std::string& filename, off_t max_read)
   return std::string{signature, 16*2};
 }
 
-std::string getcrcpartialsignature(const file_t& file, off_t max_read = PARTIAL_MD5_SIZE)
+std::string getcrcpartialsignature(const FileInfo& file, off_t max_read = PARTIAL_MD5_SIZE)
 {
     if (!file.crcpartial.empty()) return file.crcpartial;
     return getcrcsignatureuntilFNV_1a(file, max_read);
@@ -497,7 +497,7 @@ char *getcrcsignature(char *filename)
 
 #endif /* [#ifdef EXTERNAL_MD5] */
 
-void getfilestats(file_t *file)
+void getfilestats(FileInfo *file)
 {
   file->size = filesize(file->d_name);
   file->inode = getinode(file->d_name);
@@ -507,7 +507,7 @@ void getfilestats(file_t *file)
 
 /* Do a bit-for-bit comparison in case two different files produce the 
    same signature. Unlikely, but better safe than sorry. */
-bool confirmmatch(const file_t& file1, const file_t& file2)
+bool confirmmatch(const FileInfo& file1, const FileInfo& file2)
 {
     if (file1.size != file2.size) return false;
     else if (file1.size ==0) return true;
@@ -525,13 +525,13 @@ bool confirmmatch(const file_t& file1, const file_t& file2)
 /** compare a file against all known files with same hash:
  * insert into the right class, if already known, return true
  * return false otherwise */
-bool matchesCompare(FileClassMap& cmpSameHash, const FileClass& cl, unsigned counter, const file_t& f) {
+bool matchesCompare(FileClassMap& cmpSameHash, const FileClass& cl, unsigned counter, const FileInfo& f) {
     for(auto& it : cmpSameHash) {
         const auto& hcl = it.first;
         auto& indexList = it.second;
         if (indexList.empty()) continue;
         unsigned idx = *indexList.begin();
-        const file_t& f2 = fileList[idx];
+        const FileInfo& f2 = fileList[idx];
         if (confirmmatch(f,f2)) {
             indexList.insert(f.index);
             return true;
@@ -588,7 +588,7 @@ void printmatches(const FileClassMap& fileClasses)
             }
             printf("%ld duplicates for idx %d\n", indexes.size(), *indexes.begin());
             for(auto idx : indexes) {
-                file_t& tmpfile = fileList[idx];
+                FileInfo& tmpfile = fileList[idx];
                 if (ISFLAG(flags, F_DSAMELINE)) tmpfile.d_name = escapefilename("\\ ", tmpfile.d_name);
                 printf("%d: %s%c", tmpfile.index, tmpfile.d_name.c_str(), ISFLAG(flags, F_DSAMELINE)?' ':'\n');
             }
@@ -621,13 +621,13 @@ int relink(char *oldfile, char *newfile)
   return 1;
 }
 
-void deletefiles(file_t *, int prompt, FILE *tty)
+void deletefiles(FileInfo *, int prompt, FILE *tty)
 {
   int counter;
   int groups = 0;
   int curgroup = 0;
-  file_t *tmpfile;
-  file_t *curfile;
+  FileInfo *tmpfile;
+  FileInfo *curfile;
   int *preserve;
   char *preservestr;
   char *token;
@@ -757,7 +757,7 @@ void deletefiles(file_t *, int prompt, FILE *tty)
   free(preservestr);
 }
 
-int sort_pairs_by_arrival(file_t *f1, file_t *f2)
+int sort_pairs_by_arrival(FileInfo *f1, FileInfo *f2)
 {
   if (!f2->duplicates.empty())
     return 1;
@@ -765,7 +765,7 @@ int sort_pairs_by_arrival(file_t *f1, file_t *f2)
   return -1;
 }
 
-int sort_pairs_by_mtime(file_t *f1, file_t *f2)
+int sort_pairs_by_mtime(FileInfo *f1, FileInfo *f2)
 {
   if (f1->mtime < f2->mtime)
     return -1;
@@ -775,8 +775,8 @@ int sort_pairs_by_mtime(file_t *f1, file_t *f2)
   return 0;
 }
 
-void registerpair(file_t **matchlist, file_t *newmatch, 
-		  int (*comparef)(file_t *f1, file_t *f2))
+void registerpair(FileInfo **matchlist, FileInfo *newmatch,
+          int (*comparef)(FileInfo *f1, FileInfo *f2))
 {
     // ignore comparef at the moment
     auto traverse = *matchlist;
@@ -1007,7 +1007,7 @@ int main(int argc, char **argv) {
       }
       else {
           for(auto idx : lst) {
-              const file_t& f = fileList[idx];
+              const FileInfo& f = fileList[idx];
               std::string hash = getcrcpartialsignature(f);
               FileClass cl{f.size,hash,0};
               hashClasses[cl].insert(f.index);
