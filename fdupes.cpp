@@ -1113,9 +1113,10 @@ int main(int argc, char **argv) {
   }
 
   if (!ISFLAG(flags, F_HIDEPROGRESS)) fprintf(stderr, "\r%40s\r", " ");
-  timer.stop(); timer.print("scanning directories");
+  timer.stop();
 
   if (ISFLAG(flags, F_VERBOSE)) {
+      timer.print("scanning directories");
       printf("files: %ld\n",fileList.size());
   }
   
@@ -1124,7 +1125,7 @@ int main(int argc, char **argv) {
   }
 
   timer.start();
-  printf("outstanding hash jobs: %d\n", hashJobs.size());
+  //printf("outstanding hash jobs: %d\n", hashJobs.size());
   std::for_each(hashJobs.begin(),hashJobs.end(),[](auto& f){
       if (f.wait_for(std::chrono::milliseconds{0}) != std::future_status::ready) return;
       auto p = f.get();
@@ -1151,10 +1152,11 @@ int main(int argc, char **argv) {
       }
   }
   fileClasses = std::move(hashClasses);
+  timer.stop();
   if (ISFLAG(flags, F_VERBOSE)) {
+      timer.print("sorting by hash");
       printf("classes by hash: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
   }
-  timer.stop();  timer.print("sorting by hash");
 
   timer.start();
   // and finally verify the hashes by file compare
@@ -1181,10 +1183,11 @@ int main(int argc, char **argv) {
       }
   }
   fileClasses = std::move(cmpClasses);
+  timer.stop();
   if (ISFLAG(flags, F_VERBOSE)) {
+      timer.print("sorting by compare");
       printf("classes by cmp: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
   }
-  timer.stop(); timer.print("sorting by compare");
 
 #if 0
   if (ISFLAG(flags, F_DELETEFILES))
