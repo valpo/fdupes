@@ -49,6 +49,8 @@
 #include <list>
 #include <numeric>
 #include <chrono>
+#include <future>
+#include <atomic>
 
 #include <boost/iostreams/device/mapped_file.hpp>
 
@@ -275,6 +277,25 @@ int nonoptafter(const char *option, int argc, char **oldargv,
   return x;
 }
 
+//static std::atomic<int> hashJobs{0};
+static std::vector<std::future<std::pair<unsigned,std::string>>> hashJobs;
+
+std::pair<unsigned,std::string> calcHash(unsigned index)
+{
+    std::string getcrcpartialsignature(const file_t& file, off_t max_read = PARTIAL_MD5_SIZE);
+    const file_t& f = fileList[index];
+    if (f.crcpartial.empty())
+        return {index,getcrcpartialsignature(f)};
+    else
+        return {index,f.crcpartial};
+}
+
+void preCalcHash(file_t& f)
+{
+    auto res = std::async(std::launch::async,calcHash,f.index);
+    hashJobs.push_back(std::move(res));
+}
+
 int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasses)
 {
   DIR *cd;
@@ -340,7 +361,7 @@ int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasse
               pa.insert(f.index);
               if (pa.size() > 1 && f.size > 4095) {
                   //printf("its worth hashing here\n");
-
+                  preCalcHash(f);
               }
           } else {
           }
@@ -446,6 +467,7 @@ std::string getcrcsignatureuntilMD5(const std::string& filename, off_t max_read)
 
 std::string getcrcpartialsignature(const file_t& file, off_t max_read = PARTIAL_MD5_SIZE)
 {
+    if (!file.crcpartial.empty()) return file.crcpartial;
     return getcrcsignatureuntilFNV_1a(file, max_read);
     //return getcrcsignatureuntilMD5(file, max_read);
 }
@@ -1102,6 +1124,15 @@ int main(int argc, char **argv) {
   }
 
   timer.start();
+  printf("outstanding hash jobs: %d\n", hashJobs.size());
+  std::for_each(hashJobs.begin(),hashJobs.end(),[](auto& f){
+      if (f.wait_for(std::chrono::milliseconds{0}) != std::future_status::ready) return;
+      auto p = f.get();
+      if (!p.second.empty())
+        fileList[p.first].crcpartial = p.second;
+  });
+  hashJobs.clear();
+
   // further split classes by hash
   FileClassMap hashClasses;
   for(auto& p : fileClasses) {
