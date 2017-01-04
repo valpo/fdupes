@@ -85,24 +85,6 @@ constexpr unsigned INPUT_SIZE = 256;
 
 constexpr unsigned PARTIAL_MD5_SIZE = 4096;
 
-/* 
-
-TODO: Partial sums (for working with very large files).
-
-typedef struct _signature
-{
-  md5_state_t state;
-  md5_byte_t  digest[16];
-} signature_t;
-
-typedef struct _signatures
-{
-  int         num_signatures;
-  signature_t *signatures;
-} signatures_t;
-
-*/
-
 /** very simple timer to measure the duration of some calculations
  * */
 class Timer {
@@ -523,91 +505,6 @@ void getfilestats(file_t *file)
   file->mtime = getmtime(file->d_name);
 }
 
-//file_t **checkmatch(filetree_t **root, filetree_t *checktree, file_t *file)
-//{
-//  int cmpresult;
-//  char *crcsignature;
-//  off_t fsize;
-
-//  /* If device and inode fields are equal one of the files is a
-//     hard link to the other or the files have been listed twice
-//     unintentionally. We don't want to flag these files as
-//     duplicates unless the user specifies otherwise.
-//  */
-
-//  if (!ISFLAG(flags, F_CONSIDERHARDLINKS) && (getinode(file->d_name) ==
-//      checktree->file->inode) && (getdevice(file->d_name) ==
-//      checktree->file->device)) return NULL;
-
-//  fsize = filesize(file->d_name);
-  
-//  if (fsize < checktree->file->size)
-//    cmpresult = -1;
-//  else
-//    if (fsize > checktree->file->size) cmpresult = 1;
-//  else {
-//    if (checktree->file->crcpartial.empty()) {
-//      crcsignature = getcrcpartialsignature(checktree->file->d_name);
-//      if (crcsignature == NULL) return NULL;
-
-//      checktree->file->crcpartial = crcsignature;
-//    }
-
-//    if (file->crcpartial.empty()) {
-//      crcsignature = getcrcpartialsignature(file->d_name);
-//      if (crcsignature == NULL) return NULL;
-
-//      file->crcpartial = crcsignature;
-//    }
-
-//    cmpresult = strcmp(file->crcpartial.c_str(), checktree->file->crcpartial.c_str());
-//    /*if (cmpresult != 0) errormsg("    on %s vs %s\n", file->d_name, checktree->file->d_name);*/
-
-//    if (cmpresult == 0) {
-//      if (checktree->file->crcsignature.empty()) {
-//	crcsignature = getcrcsignature(checktree->file->d_name);
-//	if (crcsignature == NULL) return NULL;
-
-//    checktree->file->crcsignature = crcsignature;
-//      }
-
-//      if (file->crcsignature.empty()) {
-//	crcsignature = getcrcsignature(file->d_name);
-//	if (crcsignature == NULL) return NULL;
-
-//    file->crcsignature = crcsignature;
-//      }
-
-//      cmpresult = strcmp(file->crcsignature.c_str(), checktree->file->crcsignature.c_str());
-//      /*if (cmpresult != 0) errormsg("P   on %s vs %s\n",
-//          file->d_name, checktree->file->d_name);
-//      else errormsg("P F on %s vs %s\n", file->d_name,
-//          checktree->file->d_name);
-//      printf("%s matches %s\n", file->d_name, checktree->file->d_name);*/
-//    }
-//  }
-
-//  if (cmpresult < 0) {
-//    if (checktree->left != NULL) {
-//      return checkmatch(root, checktree->left, file);
-//    } else {
-//      registerfile(&(checktree->left), file);
-//      return NULL;
-//    }
-//  } else if (cmpresult > 0) {
-//    if (checktree->right != NULL) {
-//      return checkmatch(root, checktree->right, file);
-//    } else {
-//      registerfile(&(checktree->right), file);
-//      return NULL;
-//    }
-//  } else
-//  {
-//    getfilestats(file);
-//    return &checktree->file;
-//  }
-//}
-
 /* Do a bit-for-bit comparison in case two different files produce the 
    same signature. Unlikely, but better safe than sorry. */
 bool confirmmatch(const file_t& file1, const file_t& file2)
@@ -700,40 +597,6 @@ void printmatches(const FileClassMap& fileClasses)
         }
     }
 }
-
-/*
-#define REVISE_APPEND "_tmp"
-char *revisefilename(char *path, int seq)
-{
-  int digits;
-  char *newpath;
-  char *scratch;
-  char *dot;
-
-  digits = numdigits(seq);
-  newpath = malloc(strlen(path) + strlen(REVISE_APPEND) + digits + 1);
-  if (!newpath) return newpath;
-
-  scratch = malloc(strlen(path) + 1);
-  if (!scratch) return newpath;
-
-  strcpy(scratch, path);
-  dot = strrchr(scratch, '.');
-  if (dot) 
-  {
-    *dot = 0;
-    sprintf(newpath, "%s%s%d.%s", scratch, REVISE_APPEND, seq, dot + 1);
-  }
-
-  else
-  {
-    sprintf(newpath, "%s%s%d", path, REVISE_APPEND, seq);
-  }
-
-  free(scratch);
-
-  return newpath;
-} */
 
 int relink(char *oldfile, char *newfile)
 {
