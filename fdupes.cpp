@@ -54,36 +54,36 @@
 
 #include <boost/iostreams/device/mapped_file.hpp>
 
-inline bool ISFLAG(const unsigned a, const unsigned b) {
+static inline bool ISFLAG(const unsigned a, const unsigned b) {
   return ((a & b) == b);
 }
-inline void SETFLAG(unsigned& a, const unsigned b) {
+static inline void SETFLAG(unsigned& a, const unsigned b) {
   a |= b;
 }
 
-constexpr unsigned F_RECURSE           = 0x0001;
-constexpr unsigned F_HIDEPROGRESS      = 0x0002;
-constexpr unsigned F_DSAMELINE         = 0x0004;
-constexpr unsigned F_FOLLOWLINKS       = 0x0008;
-constexpr unsigned F_DELETEFILES       = 0x0010;
-constexpr unsigned F_EXCLUDEEMPTY      = 0x0020;
-constexpr unsigned F_CONSIDERHARDLINKS = 0x0040;
-constexpr unsigned F_SHOWSIZE          = 0x0080;
-constexpr unsigned F_OMITFIRST         = 0x0100;
-constexpr unsigned F_RECURSEAFTER      = 0x0200;
-constexpr unsigned F_NOPROMPT          = 0x0400;
-constexpr unsigned F_SUMMARIZEMATCHES  = 0x0800;
-constexpr unsigned F_VERBOSE           = 0x1000;
+static constexpr unsigned F_RECURSE           = 0x0001;
+static constexpr unsigned F_HIDEPROGRESS      = 0x0002;
+static constexpr unsigned F_DSAMELINE         = 0x0004;
+static constexpr unsigned F_FOLLOWLINKS       = 0x0008;
+static constexpr unsigned F_DELETEFILES       = 0x0010;
+static constexpr unsigned F_EXCLUDEEMPTY      = 0x0020;
+static constexpr unsigned F_CONSIDERHARDLINKS = 0x0040;
+static constexpr unsigned F_SHOWSIZE          = 0x0080;
+static constexpr unsigned F_OMITFIRST         = 0x0100;
+static constexpr unsigned F_RECURSEAFTER      = 0x0200;
+static constexpr unsigned F_NOPROMPT          = 0x0400;
+static constexpr unsigned F_SUMMARIZEMATCHES  = 0x0800;
+static constexpr unsigned F_VERBOSE           = 0x1000;
 
-char *program_name;
+static char *program_name;
 
-unsigned flags = 0;
+static unsigned flags = 0;
 
-constexpr unsigned CHUNK_SIZE = 8192;
+static constexpr unsigned CHUNK_SIZE = 8192;
 
-constexpr unsigned INPUT_SIZE = 256;
+static constexpr unsigned INPUT_SIZE = 256;
 
-constexpr unsigned PARTIAL_MD5_SIZE = 4096;
+static constexpr unsigned PARTIAL_MD5_SIZE = 4096;
 
 /** very simple timer to measure the duration of some calculations
  * */
