@@ -110,6 +110,7 @@ struct FileInfo {
   int hasdupes; /* true only if file is first on duplicate chain */
   std::set<unsigned> duplicates; //! duplicates of this file
   unsigned index; //! the index of this file in the global fileList
+  FileInfo(const std::string& n = std::string{}) : d_name{n}, device(0), inode(0), hasdupes(0) {}
 };
 using FileList = std::vector<FileInfo>;
 
@@ -278,6 +279,65 @@ void preCalcHash(FileInfo& f)
     hashJobs.push_back(std::move(res));
 }
 
+FileList parScanDir(const std::string& dirname)
+{
+    FileList fileList;
+    DIR* cd = opendir(dirname.c_str());
+    struct dirent* dirinfo;
+    while ((dirinfo = readdir(cd)) != NULL) {
+        if (!strcmp(dirinfo->d_name, ".") || !strcmp(dirinfo->d_name, "..")) continue;
+        FileInfo newfile;
+        newfile.d_name = dirname;
+        auto lastchar = dirname.size() - 1;
+        if (!dirname.empty() && dirname[lastchar] != '/')
+          newfile.d_name += "/";
+        newfile.d_name += dirinfo->d_name;
+        newfile.size = filesize(newfile.d_name);
+
+        if (newfile.size == 0 && ISFLAG(flags, F_EXCLUDEEMPTY)) {
+          continue;
+        }
+
+        struct stat info;
+        if (stat(newfile.d_name.c_str(), &info) == -1) {
+          continue;
+        }
+
+        struct stat linfo;
+        if (lstat(newfile.d_name.c_str(), &linfo) == -1) {
+          continue;
+        }
+
+        if (S_ISDIR(info.st_mode)) {
+            if (ISFLAG(flags, F_RECURSE) && (ISFLAG(flags, F_FOLLOWLINKS) || !S_ISLNK(linfo.st_mode))) {
+                auto res = parScanDir(newfile.d_name);
+                fileList.insert(fileList.end(),res.begin(),res.end());
+            }
+        } else {
+            if (S_ISREG(linfo.st_mode) || (S_ISLNK(linfo.st_mode) && ISFLAG(flags, F_FOLLOWLINKS))) {
+                // register new file
+                fileList.push_back(newfile);
+                auto idx = fileList.size()-1;
+                FileInfo& f = fileList[idx];
+                f.index = idx;
+                f.size = filesize(f.d_name);
+                //filecount++;
+                //auto& pa = fileClasses[{f.size,"",0}];
+                //pa.insert(f.index);
+                //if (pa.size() > 1 && f.size > 4095) {
+                    //printf("its worth hashing here\n");
+                //    preCalcHash(f);
+                //}
+            } else {
+            }
+        }
+      }
+
+    closedir(cd);
+
+    return fileList;
+}
+
 int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasses)
 {
   DIR *cd;
@@ -314,8 +374,9 @@ int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasse
       if (lastchar >= 0 && dir[lastchar] != '/')
         newfile.d_name += "/";
       newfile.d_name += dirinfo->d_name;
+      newfile.size = filesize(newfile.d_name);
       
-      if (filesize(newfile.d_name) == 0 && ISFLAG(flags, F_EXCLUDEEMPTY)) {
+      if (newfile.size == 0 && ISFLAG(flags, F_EXCLUDEEMPTY)) {
         continue;
       }
 
@@ -944,8 +1005,11 @@ int main(int argc, char **argv) {
     }
 
     /* F_RECURSE is not set for directories before --recurse: */
-    for (x = optind; x < firstrecurse; x++)
-      filecount += grokdir(argv[x], fileList, fileClasses);
+    for (x = optind; x < firstrecurse; x++) {
+      //filecount += grokdir(argv[x], fileList, fileClasses);
+        fileList = parScanDir(argv[x]);
+        filecount = fileList.size();
+    }
 
     /* Set F_RECURSE for directories after --recurse: */
     SETFLAG(flags, F_RECURSE);
