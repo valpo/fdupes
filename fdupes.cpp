@@ -275,6 +275,8 @@ std::pair<unsigned,std::string> calcHash(unsigned index)
 
 void preCalcHash(FileInfo& f)
 {
+    assert(f.index < fileList.size());
+    if (f.size < 4096) return;
     auto res = std::async(std::launch::async,calcHash,f.index);
     hashJobs.push_back(std::move(res));
 }
@@ -282,6 +284,8 @@ void preCalcHash(FileInfo& f)
 FileList parScanDir(const std::string& dirname)
 {
     FileList fileList;
+    std::vector<std::future<FileList>> subDirJobs;
+
     DIR* cd = opendir(dirname.c_str());
     struct dirent* dirinfo;
     while ((dirinfo = readdir(cd)) != NULL) {
@@ -310,30 +314,24 @@ FileList parScanDir(const std::string& dirname)
 
         if (S_ISDIR(info.st_mode)) {
             if (ISFLAG(flags, F_RECURSE) && (ISFLAG(flags, F_FOLLOWLINKS) || !S_ISLNK(linfo.st_mode))) {
-                auto res = parScanDir(newfile.d_name);
-                fileList.insert(fileList.end(),res.begin(),res.end());
+                auto res = std::async(std::launch::async, parScanDir, newfile.d_name);
+                subDirJobs.push_back(std::move(res));
             }
         } else {
             if (S_ISREG(linfo.st_mode) || (S_ISLNK(linfo.st_mode) && ISFLAG(flags, F_FOLLOWLINKS))) {
                 // register new file
                 fileList.push_back(newfile);
-                auto idx = fileList.size()-1;
-                FileInfo& f = fileList[idx];
-                f.index = idx;
-                f.size = filesize(f.d_name);
-                //filecount++;
-                //auto& pa = fileClasses[{f.size,"",0}];
-                //pa.insert(f.index);
-                //if (pa.size() > 1 && f.size > 4095) {
-                    //printf("its worth hashing here\n");
-                //    preCalcHash(f);
-                //}
             } else {
             }
         }
       }
 
     closedir(cd);
+    std::for_each(subDirJobs.begin(),subDirJobs.end(),[&fileList](auto& fut) {
+        const auto& f = fut.get();
+        fileList.insert(fileList.end(),f.begin(),f.end());
+    });
+
 
     return fileList;
 }
@@ -436,7 +434,8 @@ std::string getcrcsignatureuntilFNV_1a(const FileInfo& fileref, off_t max_read)
 
   FILE *file = fopen(fileref.d_name.c_str(), "rb");
   if (file == NULL) {
-    errormsg("error opening file %s\n", fileref.d_name.c_str());
+      int err = errno;
+    errormsg("error opening file %s: %s\n", fileref.d_name.c_str(), strerror(err));
     return {};
   }
 
@@ -511,7 +510,7 @@ std::string getcrcsignatureuntilMD5(const std::string& filename, off_t max_read)
 std::string getcrcpartialsignature(const FileInfo& file, off_t max_read = PARTIAL_MD5_SIZE)
 {
     if (!file.crcpartial.empty()) return file.crcpartial;
-    return getcrcsignatureuntilFNV_1a(file, max_read);
+    else return getcrcsignatureuntilFNV_1a(file, max_read);
     //return getcrcsignatureuntilMD5(file, max_read);
 }
 
@@ -878,7 +877,6 @@ void help_text()
 int main(int argc, char **argv) {
   int x;
   int opt;
-  int filecount = 0;
   int progress = 0;
   char **oldargv;
   int firstrecurse;
@@ -1007,18 +1005,22 @@ int main(int argc, char **argv) {
     /* F_RECURSE is not set for directories before --recurse: */
     for (x = optind; x < firstrecurse; x++) {
       //filecount += grokdir(argv[x], fileList, fileClasses);
-        fileList = parScanDir(argv[x]);
-        filecount = fileList.size();
+        auto l = parScanDir(argv[x]);
+        fileList.insert(fileList.end(),l.begin(),l.end());
     }
 
     /* Set F_RECURSE for directories after --recurse: */
     SETFLAG(flags, F_RECURSE);
 
-    for (x = firstrecurse; x < argc; x++)
-      filecount += grokdir(argv[x], fileList, fileClasses);
+    for (x = firstrecurse; x < argc; x++) {
+        auto l = parScanDir(argv[x]);
+        fileList.insert(fileList.end(),l.begin(),l.end());
+    }
   } else {
-    for (x = optind; x < argc; x++)
-      filecount += grokdir(argv[x], fileList, fileClasses);
+    for (x = optind; x < argc; x++) {
+        auto l = parScanDir(argv[x]);
+        fileList.insert(fileList.end(),l.begin(),l.end());
+    }
   }
 
   if (fileList.empty()) {
@@ -1026,8 +1028,8 @@ int main(int argc, char **argv) {
     exit(0);
   }
   if (!ISFLAG(flags, F_HIDEPROGRESS)) {
-    fprintf(stderr, "\rProgress [%d/%d] %d%% ", progress, filecount,
-     (int)((float) progress / (float) filecount * 100.0));
+    fprintf(stderr, "\rProgress [%d/%d] %d%% ", progress, fileList.size(),
+     (int)((float) progress / (float) fileList.size() * 100.0));
     progress++;
   }
 
@@ -1043,8 +1045,31 @@ int main(int argc, char **argv) {
       printf("classes by size: %ld with %d files\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
   }
 
+  // split class by size
   timer.start();
-  //printf("outstanding hash jobs: %d\n", hashJobs.size());
+  FileClassMap sizeClasses;
+  for(unsigned i=0;i<fileList.size();++i) {
+      FileInfo& f = fileList[i];
+      f.index = i;
+      FileClass cl{f.size,std::string{},0};
+      auto& uniqueSizes = sizeClasses[cl];
+      uniqueSizes.insert(f.index);
+      // triger hash calc
+      if (uniqueSizes.size() > 1) {
+          std::for_each(uniqueSizes.begin(),uniqueSizes.end(),[](auto &idx){ preCalcHash(fileList[idx]);});
+      }
+  }
+  fileClasses = std::move(sizeClasses);
+  timer.stop();
+  if (ISFLAG(flags, F_VERBOSE)) {
+      timer.print("sorting by size");
+      printf("classes by size: %ld with files %d\n", fileClasses.size(), std::accumulate(fileClasses.begin(),fileClasses.end(),0,[](auto i, auto j){ return i + j.second.size(); }));
+  }
+
+  timer.start();
+  if (ISFLAG(flags, F_VERBOSE)) {
+      printf("outstanding hash jobs: %d\n", hashJobs.size());
+  }
   std::for_each(hashJobs.begin(),hashJobs.end(),[](auto& f){
       if (f.wait_for(std::chrono::milliseconds{0}) != std::future_status::ready) return;
       auto p = f.get();
@@ -1052,6 +1077,7 @@ int main(int argc, char **argv) {
         fileList[p.first].crcpartial = p.second;
   });
   hashJobs.clear();
+
 
   // further split classes by hash
   FileClassMap hashClasses;
