@@ -6,6 +6,6 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -pthread")
 
 find_package(Boost REQUIRED COMPONENTS iostreams)
 
-list(APPEND FDUPES_SOURCES fdupes.cpp md5/md5.c hash_64a.c)
+list(APPEND FDUPES_SOURCES fdupes.cpp hash_64a.c)
 add_executable(fdupes ${FDUPES_SOURCES})
 target_link_libraries(fdupes ${Boost_LIBRARIES})

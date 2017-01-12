@@ -32,10 +32,6 @@
 #include <string.h>
 #include <errno.h>
 
-#ifndef EXTERNAL_MD5
-#include "md5/md5.h"
-#endif
-
 #define HAVE_64BIT_LONG_LONG
 #include "fnv.h"
 
@@ -452,61 +448,6 @@ std::string getcrcsignatureuntilFNV_1a(const FileInfo& fileref, off_t max_read)
   return n2hexstr(hash);
 }
 
-#ifndef EXTERNAL_MD5
-
-/* If EXTERNAL_MD5 is not defined, use L. Peter Deutsch's MD5 library. 
- */
-std::string getcrcsignatureuntilMD5(const std::string& filename, off_t max_read)
-{
-  int x;
-  off_t fsize;
-  off_t toread;
-  md5_state_t state;
-  md5_byte_t digest[16];  
-  static md5_byte_t chunk[CHUNK_SIZE];
-  static char signature[16*2 + 1]; 
-  char *sigp;
-  FILE *file;
-   
-  md5_init(&state);
-
- 
-  fsize = filesize(filename);
-  
-  if (max_read != 0 && fsize > max_read)
-    fsize = max_read;
-
-  file = fopen(filename.c_str(), "rb");
-  if (file == NULL) {
-    errormsg("error opening file %s\n", filename.c_str());
-    return NULL;
-  }
- 
-  while (fsize > 0) {
-    toread = (fsize % CHUNK_SIZE) ? (fsize % CHUNK_SIZE) : CHUNK_SIZE;
-    if (fread(chunk, toread, 1, file) != 1) {
-      errormsg("error reading from file %s\n", filename.c_str());
-      fclose(file);
-      return NULL;
-    }
-    md5_append(&state, chunk, toread);
-    fsize -= toread;
-  }
-
-  md5_finish(&state, digest);
-
-  sigp = signature;
-
-  for (x = 0; x < 16; x++) {
-    sprintf(sigp, "%02x", digest[x]);
-    sigp = strchr(sigp, '\0');
-  }
-
-  fclose(file);
-
-  return std::string{signature, 16*2};
-}
-
 std::string getcrcpartialsignature(const FileInfo& file, off_t max_read = PARTIAL_MD5_SIZE)
 {
     if (!file.crcpartial.empty()) return file.crcpartial;
@@ -514,48 +455,6 @@ std::string getcrcpartialsignature(const FileInfo& file, off_t max_read = PARTIA
     //return getcrcsignatureuntilMD5(file, max_read);
 }
 
-#endif /* [#ifndef EXTERNAL_MD5] */
-
-#ifdef EXTERNAL_MD5
-
-/* If EXTERNAL_MD5 is defined, use md5sum program to calculate signatures.
- */
-char *getcrcsignature(char *filename)
-{
-  static char signature[256];
-  char *command;
-  char *separator;
-  FILE *result;
-
-  command = (char*) malloc(strlen(filename)+strlen(EXTERNAL_MD5)+2);
-  if (command == NULL) {
-    errormsg("out of memory\n");
-    exit(1);
-  }
-
-  sprintf(command, "%s %s", EXTERNAL_MD5, filename);
-
-  result = popen(command, "r");
-  if (result == NULL) {
-    errormsg("error invoking %s\n", EXTERNAL_MD5);
-    exit(1);
-  }
- 
-  free(command);
-
-  if (fgets(signature, 256, result) == NULL) {
-    errormsg("error generating signature for %s\n", filename);
-    return NULL;
-  }    
-  separator = strchr(signature, ' ');
-  if (separator) *separator = '\0';
-
-  pclose(result);
-
-  return signature;
-}
-
-#endif /* [#ifdef EXTERNAL_MD5] */
 
 /* Do a bit-for-bit comparison in case two different files produce the 
    same signature. Unlikely, but better safe than sorry. */
