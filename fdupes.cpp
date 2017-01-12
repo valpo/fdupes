@@ -99,14 +99,12 @@ struct FileInfo {
   std::string d_name;
   off_t size;
   std::string crcpartial;
-  std::string crcsignature;
   dev_t device;
   ino_t inode;
   time_t mtime;
-  int hasdupes; /* true only if file is first on duplicate chain */
   std::set<unsigned> duplicates; //! duplicates of this file
   unsigned index; //! the index of this file in the global fileList
-  FileInfo(const std::string& n = std::string{}) : d_name{n}, device(0), inode(0), hasdupes(0) {}
+  FileInfo(const std::string& n = std::string{}) : d_name{n}, device(0), inode(0) {}
 };
 using FileList = std::vector<FileInfo>;
 
@@ -359,10 +357,6 @@ int grokdir(const std::string& dir, FileList& fileList, FileClassMap& fileClasse
 
       FileInfo newfile;
 
-      newfile.device = 0;
-      newfile.inode = 0;
-      newfile.hasdupes = 0;
-
       newfile.d_name = dir;
       lastchar = dir.size() - 1;
       if (lastchar >= 0 && dir[lastchar] != '/')
@@ -590,7 +584,7 @@ void deletefiles(FileInfo *, int prompt, FILE *tty)
   int i;
 
   for(const auto& curfile : fileList) {
-    if (curfile.hasdupes) {
+    if (!curfile.duplicates.empty()) {
       counter = 1;
       groups++;
 
@@ -612,7 +606,7 @@ void deletefiles(FileInfo *, int prompt, FILE *tty)
   }
 
   for(const auto& curfile : fileList) {
-    if (curfile.hasdupes) {
+    if (!curfile.duplicates.empty()) {
       curgroup++;
       counter = 1;
       dupelist.push_back(curfile.index);
@@ -724,17 +718,6 @@ int sort_pairs_by_mtime(FileInfo *f1, FileInfo *f2)
     return 1;
 
   return 0;
-}
-
-void registerpair(FileInfo **matchlist, FileInfo *newmatch,
-          int (*comparef)(FileInfo *f1, FileInfo *f2))
-{
-    // ignore comparef at the moment
-    auto traverse = *matchlist;
-    newmatch->duplicates.insert(traverse->index);
-    newmatch->duplicates.insert(traverse->duplicates.begin(),traverse->duplicates.end());
-    newmatch->hasdupes = 1;
-    traverse->hasdupes = 0;
 }
 
 void help_text()
