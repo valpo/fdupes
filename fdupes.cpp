@@ -50,6 +50,9 @@
 
 #include <boost/iostreams/device/mapped_file.hpp>
 
+#include "threadpool.h"
+using namespace FdupesThreading;
+
 static inline bool ISFLAG(const unsigned a, const unsigned b) {
   return ((a & b) == b);
 }
@@ -275,10 +278,22 @@ void preCalcHash(FileInfo& f)
     hashJobs.push_back(std::move(res));
 }
 
-FileList parScanDir(const std::string& dirname)
+// threadpool for io-heavy-work
+ThreadPool ioThreadPool(50); //std::max(std::thread::hardware_concurrency(), 2u)*10);
+using FileFutures = std::vector<ThreadPool::TaskFuture<FileList>>;
+
+static FileFutures checkFile(const FileInfo& f)
 {
-    FileList fileList;
-    std::vector<std::future<FileList>> subDirJobs;
+    FileFutures subJobs;
+    auto fut = ioThreadPool.submit([](const FileInfo f) { return FileList{f}; }, f);
+    subJobs.push_back(std::move(fut));
+    return subJobs;
+}
+
+FileFutures parScanDir(const std::string& dirname)
+{
+    //printf("scanning dir %s\n", dirname.c_str());
+    FileFutures subJobs;
 
     DIR* cd = opendir(dirname.c_str());
     struct dirent* dirinfo;
@@ -308,25 +323,32 @@ FileList parScanDir(const std::string& dirname)
 
         if (S_ISDIR(info.st_mode)) {
             if (ISFLAG(flags, F_RECURSE) && (ISFLAG(flags, F_FOLLOWLINKS) || !S_ISLNK(linfo.st_mode))) {
-                auto res = std::async(std::launch::async, parScanDir, newfile.d_name);
-                subDirJobs.push_back(std::move(res));
+                auto jobs = parScanDir(newfile.d_name);
+                subJobs.reserve(subJobs.size()+jobs.size());
+                subJobs.insert(subJobs.end(), make_move_iterator(jobs.begin()), make_move_iterator(jobs.end()));
             }
         } else {
             if (S_ISREG(linfo.st_mode) || (S_ISLNK(linfo.st_mode) && ISFLAG(flags, F_FOLLOWLINKS))) {
-                // register new file
-                fileList.push_back(newfile);
+                auto jobs = checkFile(newfile);
+                subJobs.reserve(subJobs.size()+jobs.size());
+                subJobs.insert(subJobs.end(), make_move_iterator(jobs.begin()), make_move_iterator(jobs.end()));
             } else {
             }
         }
       }
 
     closedir(cd);
-    std::for_each(subDirJobs.begin(),subDirJobs.end(),[&fileList](auto& fut) {
-        const auto& f = fut.get();
-        fileList.insert(fileList.end(),f.begin(),f.end());
-    });
-
-
+    return subJobs;
+}
+FileList scanDir(const std::string& dirname)
+{
+    FileFutures subJobs = parScanDir(dirname);
+    printf("got %d jobs from scan\n", subJobs.size());
+    FileList fileList;
+    for(auto &f : subJobs) {
+        auto fi = f.get();
+        fileList.insert(fileList.end(),fi.begin(),fi.end());
+    }
     return fileList;
 }
 
@@ -812,7 +834,7 @@ int main(int argc, char **argv) {
     /* F_RECURSE is not set for directories before --recurse: */
     for (x = optind; x < firstrecurse; x++) {
       //filecount += grokdir(argv[x], fileList, fileClasses);
-        auto l = parScanDir(argv[x]);
+        auto l = scanDir(argv[x]);
         fileList.insert(fileList.end(),l.begin(),l.end());
     }
 
@@ -820,12 +842,12 @@ int main(int argc, char **argv) {
     SETFLAG(flags, F_RECURSE);
 
     for (x = firstrecurse; x < argc; x++) {
-        auto l = parScanDir(argv[x]);
+        auto l = scanDir(argv[x]);
         fileList.insert(fileList.end(),l.begin(),l.end());
     }
   } else {
     for (x = optind; x < argc; x++) {
-        auto l = parScanDir(argv[x]);
+        auto l = scanDir(argv[x]);
         fileList.insert(fileList.end(),l.begin(),l.end());
     }
   }
